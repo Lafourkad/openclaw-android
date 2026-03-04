@@ -78,6 +78,7 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
         "LD_LIBRARY_PATH"     to "$glibcDir/lib:$pythonDir/lib",
         "UV_USE_IO_URING"     to "0",
         "CHOKIDAR_USEPOLLING" to "true",
+        "MALLOC_ARENA_MAX"    to "1",
         "GOROOT"              to goDir,
         "GOPATH"              to "$filesDir/gopath",
         "GOCACHE"             to "$filesDir/tmp/go-cache",
@@ -92,10 +93,16 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
         "npm_config_cache"        to "$filesDir/tmp/npm-cache",
 
         // /system/bin/true accepts any args and exits 0 — acts as a no-op git stub.
-        // npm prepends --no-replace-objects to all git calls; true ignores it.
         "npm_config_git"          to "/system/bin/true",
         "UV_USE_IO_URING"         to "0",
         "CHOKIDAR_USEPOLLING"     to "true",
+
+        // Limit glibc malloc arenas to 1 — prevents heap corruption on stock Android
+        // (multi-arena malloc + bionic interaction causes "corrupted size vs. prev_size")
+        "MALLOC_ARENA_MAX"        to "1",
+        // Cap Node.js heap to 512MB during bootstrap — reduces memory pressure
+        "NODE_OPTIONS"            to "--max-old-space-size=512",
+
         "PATH"                    to "$nodeDir/bin:/system/bin",
     )
 
