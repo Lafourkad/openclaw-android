@@ -11,3 +11,5 @@ coverage/
 flutter_app/android/key.properties
 *.jks
 *.keystore
+
+.github/
