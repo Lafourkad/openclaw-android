@@ -72,6 +72,12 @@ class GatewayService : Service() {
     }
 
     private fun startGateway() {
+        // Kill any existing gateway process before starting a new one
+        // Prevents double-response when service is restarted
+        gatewayProcess?.let {
+            try { it.destroyForcibly() } catch (_: Exception) {}
+            gatewayProcess = null
+        }
         isRunning = true
         instance = this
         startTime = System.currentTimeMillis()
