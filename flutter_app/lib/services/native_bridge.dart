@@ -5,10 +5,6 @@ class NativeBridge {
   static const _channel = MethodChannel(AppConstants.channelName);
   static const _eventChannel = EventChannel(AppConstants.eventChannelName);
 
-  static Future<String> getProotPath() async {
-    return await _channel.invokeMethod('getProotPath');
-  }
-
   static Future<String> getArch() async {
     return await _channel.invokeMethod('getArch');
   }
@@ -30,12 +26,66 @@ class NativeBridge {
     return Map<String, dynamic>.from(result);
   }
 
-  static Future<bool> extractRootfs(String tarPath) async {
-    return await _channel.invokeMethod('extractRootfs', {'tarPath': tarPath});
+  static Future<bool> setupDirs() async {
+    return await _channel.invokeMethod('setupDirs');
   }
 
-  static Future<String> runInProot(String command, {int timeout = 900}) async {
-    return await _channel.invokeMethod('runInProot', {'command': command, 'timeout': timeout});
+  static Future<bool> extractGlibcDeb(String debPath) async {
+    return await _channel.invokeMethod('extractGlibcDeb', {'tarPath': debPath});
+  }
+
+  static Future<bool> extractNodeTarball(String tarPath) async {
+    return await _channel.invokeMethod('extractNodeTarball', {'tarPath': tarPath});
+  }
+
+  static Future<void> patchGlibcPaths() async {
+    await _channel.invokeMethod('patchGlibcPaths');
+  }
+
+  static Future<void> patchNpmGit() async {
+    await _channel.invokeMethod('patchNpmGit');
+  }
+
+  static Future<void> writeNpmOverrides() async {
+    await _channel.invokeMethod('writeNpmOverrides');
+  }
+
+  static Future<String?> copyNpmLogToExternal() async {
+    return await _channel.invokeMethod<String>('copyNpmLogToExternal');
+  }
+
+  static Future<void> copyGlibcCompat() async {
+    await _channel.invokeMethod('copyGlibcCompat');
+  }
+
+  static Future<bool> isPythonInstalled() async {
+    return await _channel.invokeMethod('isPythonInstalled');
+  }
+
+  static Future<bool> isGoInstalled() async {
+    return await _channel.invokeMethod('isGoInstalled');
+  }
+
+  static Future<bool> extractPythonTarball(String tarPath) async {
+    return await _channel.invokeMethod('extractPythonTarball', {'tarPath': tarPath});
+  }
+
+  static Future<bool> extractGoTarball(String tarPath) async {
+    return await _channel.invokeMethod('extractGoTarball', {'tarPath': tarPath});
+  }
+
+  static Future<void> markBootstrapDone() async {
+    await _channel.invokeMethod('markBootstrapDone');
+  }
+
+  static Future<String> runNode(List<String> args, {int timeout = 900}) async {
+    return await _channel.invokeMethod('runNode', {'args': args, 'timeout': timeout});
+  }
+
+  /// Like runNode but without NODE_OPTIONS — use during bootstrap before
+  /// glibc-compat.js is in place.
+  static Future<String> runNodeBootstrap(List<String> args, {int timeout = 1800}) async {
+    return await _channel.invokeMethod('runNodeBootstrap', {'args': args, 'timeout': timeout});
   }
 
   static Future<bool> startGateway() async {
@@ -48,30 +98,6 @@ class NativeBridge {
 
   static Future<bool> isGatewayRunning() async {
     return await _channel.invokeMethod('isGatewayRunning');
-  }
-
-  static Future<bool> setupDirs() async {
-    return await _channel.invokeMethod('setupDirs');
-  }
-
-  static Future<bool> installBionicBypass() async {
-    return await _channel.invokeMethod('installBionicBypass');
-  }
-
-  static Future<bool> writeResolv() async {
-    return await _channel.invokeMethod('writeResolv');
-  }
-
-  static Future<int> extractDebPackages() async {
-    return await _channel.invokeMethod('extractDebPackages');
-  }
-
-  static Future<bool> extractNodeTarball(String tarPath) async {
-    return await _channel.invokeMethod('extractNodeTarball', {'tarPath': tarPath});
-  }
-
-  static Future<bool> createBinWrappers(String packageName) async {
-    return await _channel.invokeMethod('createBinWrappers', {'packageName': packageName});
   }
 
   static Future<bool> startTerminalService() async {
@@ -150,12 +176,8 @@ class NativeBridge {
     return await _channel.invokeMethod('getExternalStoragePath');
   }
 
-  static Future<String?> readRootfsFile(String path) async {
-    return await _channel.invokeMethod('readRootfsFile', {'path': path});
-  }
-
-  static Future<bool> writeRootfsFile(String path, String content) async {
-    return await _channel.invokeMethod('writeRootfsFile', {'path': path, 'content': content});
+  static Future<bool> openTermux() async {
+    return await _channel.invokeMethod('openTermux');
   }
 
   // SSH Service
@@ -180,7 +202,13 @@ class NativeBridge {
     return List<String>.from(result);
   }
 
-  static Future<bool> setRootPassword(String password) async {
-    return await _channel.invokeMethod('setRootPassword', {'password': password});
+  /// Import openclaw-migrate.json from sdcard root → filesDir/.openclaw/openclaw.json
+  static Future<void> importMigrateConfig() async {
+    await _channel.invokeMethod('importMigrateConfig');
+  }
+
+  /// Read the gateway auth token from openclaw.json (generated on first start)
+  static Future<String> readGatewayToken() async {
+    return await _channel.invokeMethod<String>('readGatewayToken') ?? '';
   }
 }

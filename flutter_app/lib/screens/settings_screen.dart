@@ -25,12 +25,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _nodeEnabled = false;
   bool _batteryOptimized = true;
   String _arch = '';
-  String _prootPath = '';
   Map<String, dynamic> _status = {};
   bool _loading = true;
-  bool _goInstalled = false;
-  bool _brewInstalled = false;
-  bool _sshInstalled = false;
   bool _storageGranted = false;
 
   @override
@@ -46,29 +42,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final arch = await NativeBridge.getArch();
-      final prootPath = await NativeBridge.getProotPath();
       final status = await NativeBridge.getBootstrapStatus();
       final batteryOptimized = await NativeBridge.isBatteryOptimized();
-
       final storageGranted = await NativeBridge.hasStoragePermission();
-
-      // Check optional package statuses
-      final filesDir = await NativeBridge.getFilesDir();
-      final rootfs = '$filesDir/rootfs/ubuntu';
-      final goInstalled = File('$rootfs/usr/bin/go').existsSync();
-      final brewInstalled =
-          File('$rootfs/home/linuxbrew/.linuxbrew/bin/brew').existsSync();
-      final sshInstalled = File('$rootfs/usr/bin/ssh').existsSync();
 
       setState(() {
         _batteryOptimized = batteryOptimized;
         _storageGranted = storageGranted;
         _arch = arch;
-        _prootPath = prootPath;
         _status = status;
-        _goInstalled = goInstalled;
-        _brewInstalled = brewInstalled;
-        _sshInstalled = sshInstalled;
         _loading = false;
       });
     } catch (e) {
@@ -117,7 +99,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   title: const Text('Setup Storage'),
                   subtitle: Text(_storageGranted
-                      ? 'Granted — /sdcard accessible in proot'
+                      ? 'Granted — /sdcard accessible'
                       : 'Allow access to shared storage'),
                   leading: const Icon(Icons.sd_storage),
                   trailing: _storageGranted
@@ -164,51 +146,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   leading: const Icon(Icons.memory),
                 ),
                 ListTile(
-                  title: const Text('PRoot path'),
-                  subtitle: Text(_prootPath),
-                  leading: const Icon(Icons.folder),
-                ),
-                ListTile(
-                  title: const Text('Rootfs'),
-                  subtitle: Text(_status['rootfsExists'] == true
+                  title: const Text('glibc'),
+                  subtitle: Text(_status['ldSoExists'] == true
                       ? 'Installed'
                       : 'Not installed'),
                   leading: const Icon(Icons.storage),
                 ),
                 ListTile(
                   title: const Text('Node.js'),
-                  subtitle: Text(_status['nodeInstalled'] == true
+                  subtitle: Text(_status['nodeExists'] == true
                       ? 'Installed'
                       : 'Not installed'),
                   leading: const Icon(Icons.code),
                 ),
                 ListTile(
                   title: const Text('OpenClaw'),
-                  subtitle: Text(_status['openclawInstalled'] == true
+                  subtitle: Text(_status['openclawExists'] == true
                       ? 'Installed'
                       : 'Not installed'),
                   leading: const Icon(Icons.cloud),
-                ),
-                ListTile(
-                  title: const Text('Go (Golang)'),
-                  subtitle: Text(_goInstalled
-                      ? 'Installed'
-                      : 'Not installed'),
-                  leading: const Icon(Icons.integration_instructions),
-                ),
-                ListTile(
-                  title: const Text('Homebrew'),
-                  subtitle: Text(_brewInstalled
-                      ? 'Installed'
-                      : 'Not installed'),
-                  leading: const Icon(Icons.science),
-                ),
-                ListTile(
-                  title: const Text('OpenSSH'),
-                  subtitle: Text(_sshInstalled
-                      ? 'Installed'
-                      : 'Not installed'),
-                  leading: const Icon(Icons.vpn_key),
                 ),
                 const Divider(),
                 _sectionHeader(theme, 'MAINTENANCE'),
@@ -247,28 +203,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   leading: Icon(Icons.info_outline),
                   isThreeLine: true,
                 ),
-                const ListTile(
-                  title: Text('Developer'),
-                  subtitle: Text(AppConstants.authorName),
-                  leading: Icon(Icons.person),
-                ),
                 ListTile(
-                  title: const Text('GitHub'),
-                  subtitle: const Text('mithun50/openclaw-termux'),
-                  leading: const Icon(Icons.code),
+                  title: const Text('By'),
+                  subtitle: const Text('@0xGrug'),
+                  leading: const Icon(Icons.person),
                   trailing: const Icon(Icons.open_in_new, size: 18),
                   onTap: () => launchUrl(
-                    Uri.parse(AppConstants.githubUrl),
+                    Uri.parse(AppConstants.authorXUrl),
                     mode: LaunchMode.externalApplication,
-                  ),
-                ),
-                ListTile(
-                  title: const Text('Contact'),
-                  subtitle: const Text(AppConstants.authorEmail),
-                  leading: const Icon(Icons.email),
-                  trailing: const Icon(Icons.open_in_new, size: 18),
-                  onTap: () => launchUrl(
-                    Uri.parse('mailto:${AppConstants.authorEmail}'),
                   ),
                 ),
                 const ListTile(
@@ -277,44 +219,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   leading: Icon(Icons.description),
                 ),
                 const Divider(),
-                _sectionHeader(theme, AppConstants.orgName.toUpperCase()),
+                _sectionHeader(theme, 'CREDITS'),
                 ListTile(
-                  title: const Text('Instagram'),
-                  subtitle: const Text('@nexgenxplorer_nxg'),
-                  leading: const Icon(Icons.camera_alt),
+                  title: const Text('Based on openclaw-termux'),
+                  subtitle: const Text('by Mithun Gowda B'),
+                  leading: const Icon(Icons.code),
                   trailing: const Icon(Icons.open_in_new, size: 18),
                   onTap: () => launchUrl(
-                    Uri.parse(AppConstants.instagramUrl),
+                    Uri.parse(AppConstants.upstreamUrl),
                     mode: LaunchMode.externalApplication,
                   ),
                 ),
                 ListTile(
-                  title: const Text('YouTube'),
-                  subtitle: const Text('@nexgenxplorer'),
-                  leading: const Icon(Icons.play_circle_fill),
+                  title: const Text('glibc approach'),
+                  subtitle: const Text('by Aidan Park'),
+                  leading: const Icon(Icons.memory),
                   trailing: const Icon(Icons.open_in_new, size: 18),
                   onTap: () => launchUrl(
-                    Uri.parse(AppConstants.youtubeUrl),
+                    Uri.parse(AppConstants.glibcCreditUrl),
                     mode: LaunchMode.externalApplication,
-                  ),
-                ),
-                ListTile(
-                  title: const Text('Play Store'),
-                  subtitle: const Text('NextGenX Apps'),
-                  leading: const Icon(Icons.shop),
-                  trailing: const Icon(Icons.open_in_new, size: 18),
-                  onTap: () => launchUrl(
-                    Uri.parse(AppConstants.playStoreUrl),
-                    mode: LaunchMode.externalApplication,
-                  ),
-                ),
-                ListTile(
-                  title: const Text('Email'),
-                  subtitle: const Text(AppConstants.orgEmail),
-                  leading: const Icon(Icons.email_outlined),
-                  trailing: const Icon(Icons.open_in_new, size: 18),
-                  onTap: () => launchUrl(
-                    Uri.parse('mailto:${AppConstants.orgEmail}'),
                   ),
                 ),
               ],
@@ -339,7 +262,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportSnapshot() async {
     try {
-      final openclawJson = await NativeBridge.readRootfsFile('root/.openclaw/openclaw.json');
+      final filesDir = await NativeBridge.getFilesDir();
+      final configFile = File('$filesDir/.openclaw/openclaw.json');
+      final openclawJson = configFile.existsSync() ? configFile.readAsStringSync() : null;
       final snapshot = {
         'version': AppConstants.version,
         'timestamp': DateTime.now().toIso8601String(),
@@ -367,48 +292,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _importSnapshot() async {
     try {
-      final path = await _getSnapshotPath();
-      final file = File(path);
+      final snapshotPath = await _getSnapshotPath();
+      final snapshotFile = File(snapshotPath);
 
-      if (!await file.exists()) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No snapshot found at $path')),
-        );
-        return;
+      if (await snapshotFile.exists()) {
+        // Standard snapshot format
+        final content = await snapshotFile.readAsString();
+        final snapshot = jsonDecode(content) as Map<String, dynamic>;
+        final openclawConfig = snapshot['openclawConfig'] as String?;
+        if (openclawConfig != null) {
+          final filesDir = await NativeBridge.getFilesDir();
+          final configFile = File('$filesDir/.openclaw/openclaw.json');
+          configFile.parent.createSync(recursive: true);
+          configFile.writeAsStringSync(openclawConfig);
+        }
+        if (snapshot['dashboardUrl'] != null) _prefs.dashboardUrl = snapshot['dashboardUrl'] as String;
+        if (snapshot['autoStart'] != null) _prefs.autoStartGateway = snapshot['autoStart'] as bool;
+        if (snapshot['nodeEnabled'] != null) _prefs.nodeEnabled = snapshot['nodeEnabled'] as bool;
+      } else {
+        // Fallback: import openclaw-migrate.json via Kotlin (bypasses Android 13 sdcard restrictions)
+        await NativeBridge.importMigrateConfig();
       }
 
-      final content = await file.readAsString();
-      final snapshot = jsonDecode(content) as Map<String, dynamic>;
-
-      // Restore openclaw.json into rootfs
-      final openclawConfig = snapshot['openclawConfig'] as String?;
-      if (openclawConfig != null) {
-        await NativeBridge.writeRootfsFile('root/.openclaw/openclaw.json', openclawConfig);
-      }
-
-      // Restore preferences
-      if (snapshot['dashboardUrl'] != null) {
-        _prefs.dashboardUrl = snapshot['dashboardUrl'] as String;
-      }
-      if (snapshot['autoStart'] != null) {
-        _prefs.autoStartGateway = snapshot['autoStart'] as bool;
-      }
-      if (snapshot['nodeEnabled'] != null) {
-        _prefs.nodeEnabled = snapshot['nodeEnabled'] as bool;
-      }
-
-      // Refresh UI
       await _loadSettings();
-
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Snapshot restored successfully. Restart the gateway to apply.')),
+        const SnackBar(content: Text('Config importé. Redémarre le gateway pour appliquer.')),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Import failed: $e')),
+        SnackBar(content: Text('Import échoué: $e')),
       );
     }
   }

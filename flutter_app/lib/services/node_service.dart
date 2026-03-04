@@ -315,7 +315,11 @@ class NodeService {
         if (isLocal) {
           _log('[NODE] Local gateway detected, auto-approving...');
           try {
-            await NativeBridge.runInProot('openclaw nodes approve $code');
+            final filesDir = await NativeBridge.getFilesDir();
+            await NativeBridge.runNode(
+              ['$filesDir/node/bin/openclaw', 'nodes', 'approve', code],
+              timeout: 15,
+            );
             _log('[NODE] Auto-approve command sent');
             await Future.delayed(const Duration(milliseconds: 500));
             await _ws.disconnect();

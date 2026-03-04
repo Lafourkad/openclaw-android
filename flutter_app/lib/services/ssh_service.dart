@@ -1,23 +1,10 @@
-import 'dart:io';
-import '../models/optional_package.dart';
 import 'native_bridge.dart';
 
 /// Manages SSH server via a native foreground service.
-/// sshd runs in a persistent proot process (not single-shot runInProot).
 class SshService {
-  static String? _rootfsDir;
-
-  static Future<String> _getRootfsDir() async {
-    if (_rootfsDir != null) return _rootfsDir!;
-    final filesDir = await NativeBridge.getFilesDir();
-    _rootfsDir = '$filesDir/rootfs/ubuntu';
-    return _rootfsDir!;
-  }
-
-  /// Check if OpenSSH is installed.
+  /// Check if OpenSSH is installed (not applicable in glibc mode).
   static Future<bool> isInstalled() async {
-    final rootfs = await _getRootfsDir();
-    return File('$rootfs/${OptionalPackage.sshPackage.checkPath}').existsSync();
+    return false;
   }
 
   /// Check if sshd foreground service is running.
@@ -39,9 +26,9 @@ class SshService {
     await NativeBridge.stopSshd();
   }
 
-  /// Set the root password inside proot.
+  /// Set the root password (not supported in glibc mode).
   static Future<void> setPassword(String password) async {
-    await NativeBridge.setRootPassword(password);
+    throw UnsupportedError('setPassword is not supported in glibc mode');
   }
 
   /// Get device IP addresses from Android NetworkInterface (not proot).

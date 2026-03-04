@@ -73,7 +73,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                   Text(
                     _started
                         ? 'Setting up the environment. This may take several minutes.'
-                        : 'This will download Ubuntu, Node.js, and OpenClaw into a self-contained environment.',
+                        : 'This will download glibc, Node.js, and OpenClaw into a self-contained environment.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -137,7 +137,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                     const SizedBox(height: 8),
                     Center(
                       child: Text(
-                        'Requires ~500MB of storage and an internet connection',
+                        'Requires ~200MB of storage and an internet connection',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -147,7 +147,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                   const SizedBox(height: 16),
                   Center(
                     child: Text(
-                      'by ${AppConstants.authorName} | ${AppConstants.orgName}',
+                      'by ${AppConstants.authorName}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -164,11 +164,9 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
 
   Widget _buildSteps(SetupState state, ThemeData theme, bool isDark) {
     final steps = [
-      (1, 'Download Ubuntu rootfs', SetupStep.downloadingRootfs),
-      (2, 'Extract rootfs', SetupStep.extractingRootfs),
-      (3, 'Install Node.js', SetupStep.installingNode),
-      (4, 'Install OpenClaw', SetupStep.installingOpenClaw),
-      (5, 'Configure Bionic Bypass', SetupStep.configuringBypass),
+      (1, 'Download glibc runtime', SetupStep.downloadingGlibc),
+      (2, 'Install Node.js', SetupStep.downloadingNode),
+      (3, 'Install OpenClaw', SetupStep.installingOpenClaw),
     ];
 
     return ListView(
@@ -184,25 +182,11 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
           ),
         if (state.isComplete) ...[
           const ProgressStep(
-            stepNumber: 6,
+            stepNumber: 4,
             label: 'Setup complete!',
             isComplete: true,
           ),
           const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              'OPTIONAL PACKAGES',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          for (final pkg in OptionalPackage.all)
-            _buildPackageTile(theme, pkg, isDark),
         ],
       ],
     );

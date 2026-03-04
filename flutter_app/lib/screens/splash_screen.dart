@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../constants.dart';
@@ -47,28 +46,8 @@ class _SplashScreenState extends State<SplashScreen>
     try {
       setState(() => _status = 'Checking setup status...');
 
-      // Ensure directories and resolv.conf exist on every app open.
-      // Android may clear the files directory during update or reinstall (#40).
+      // Ensure directories exist on every app open.
       try { await NativeBridge.setupDirs(); } catch (_) {}
-      try { await NativeBridge.writeResolv(); } catch (_) {}
-
-      // Direct Dart fallback: create resolv.conf if native calls failed (#40).
-      try {
-        final filesDir = await NativeBridge.getFilesDir();
-        const resolvContent = 'nameserver 8.8.8.8\nnameserver 8.8.4.4\n';
-        final configDir = '$filesDir/config';
-        final resolvFile = File('$configDir/resolv.conf');
-        if (!resolvFile.existsSync()) {
-          Directory(configDir).createSync(recursive: true);
-          resolvFile.writeAsStringSync(resolvContent);
-        }
-        // Also write into rootfs /etc/ so DNS works even if bind-mount fails
-        final rootfsResolv = File('$filesDir/rootfs/ubuntu/etc/resolv.conf');
-        if (!rootfsResolv.existsSync()) {
-          rootfsResolv.parent.createSync(recursive: true);
-          rootfsResolv.writeAsStringSync(resolvContent);
-        }
-      } catch (_) {}
 
       final prefs = PreferencesService();
       await prefs.init();
@@ -132,7 +111,7 @@ class _SplashScreenState extends State<SplashScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                'by ${AppConstants.authorName} | ${AppConstants.orgName}',
+                'by ${AppConstants.authorName}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),

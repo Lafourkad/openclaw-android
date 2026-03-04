@@ -1,14 +1,15 @@
 import 'dart:convert';
+import 'dart:io';
 import '../models/ai_provider.dart';
 import 'native_bridge.dart';
 
 /// Reads and writes AI provider configuration in openclaw.json.
 class ProviderConfigService {
-  static const _configPath = '/root/.openclaw/openclaw.json';
+  static String? _filesDir;
 
-  /// Escape a string for use as a single-quoted shell argument.
-  static String _shellEscape(String s) {
-    return "'${s.replaceAll("'", "'\\''")}'";
+  static Future<String> _getConfigPath() async {
+    _filesDir ??= await NativeBridge.getFilesDir();
+    return '$_filesDir/.openclaw/openclaw.json';
   }
 
   /// Read the current config and return a map with:
@@ -16,8 +17,13 @@ class ProviderConfigService {
   /// - `providers`: Map<providerId, {apiKey, model}> for configured providers
   static Future<Map<String, dynamic>> readConfig() async {
     try {
-      final content = await NativeBridge.readRootfsFile(_configPath);
-      if (content == null || content.isEmpty) {
+      final path = await _getConfigPath();
+      final file = File(path);
+      if (!file.existsSync()) {
+        return {'activeModel': null, 'providers': <String, dynamic>{}};
+      }
+      final content = file.readAsStringSync();
+      if (content.isEmpty) {
         return {'activeModel': null, 'providers': <String, dynamic>{}};
       }
       final config = jsonDecode(content) as Map<String, dynamic>;
@@ -54,8 +60,6 @@ class ProviderConfigService {
   }
 
   /// Save a provider's API key and set its model as the active model.
-  /// Tries a Node.js one-liner in proot first, then falls back to a direct
-  /// file write via NativeBridge.writeRootfsFile if proot/DNS is unavailable.
   static Future<void> saveProviderConfig({
     required AiProvider provider,
     required String apiKey,
@@ -70,7 +74,7 @@ class ProviderConfigService {
 
     final script = '''
 const fs = require("fs");
-const p = "$_configPath";
+const p = process.env.HOME + "/.openclaw/openclaw.json";
 let c = {};
 try { c = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
 if (!c.models) c.models = {};
@@ -84,12 +88,9 @@ fs.mkdirSync(require("path").dirname(p), { recursive: true });
 fs.writeFileSync(p, JSON.stringify(c, null, 2));
 ''';
     try {
-      await NativeBridge.runInProot(
-        'node -e ${_shellEscape(script)}',
-        timeout: 15,
-      );
+      await NativeBridge.runNode(['-e', script], timeout: 15);
     } catch (_) {
-      // Fallback: write config directly via NativeBridge file I/O
+      // Fallback: write config directly via dart:io
       await _saveConfigDirect(
         providerId: provider.id,
         apiKey: apiKey,
@@ -99,22 +100,24 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
     }
   }
 
-  /// Direct file-write fallback that doesn't depend on proot or DNS.
+  /// Direct file-write fallback that doesn't depend on runNode.
   static Future<void> _saveConfigDirect({
     required String providerId,
     required String apiKey,
     required String baseUrl,
     required String model,
   }) async {
+    final path = await _getConfigPath();
     Map<String, dynamic> config = {};
     try {
-      final content = await NativeBridge.readRootfsFile(_configPath);
-      if (content != null && content.isNotEmpty) {
-        config = jsonDecode(content) as Map<String, dynamic>;
+      final file = File(path);
+      if (file.existsSync()) {
+        final content = file.readAsStringSync();
+        if (content.isNotEmpty) {
+          config = jsonDecode(content) as Map<String, dynamic>;
+        }
       }
-    } catch (_) {
-      // Start fresh
-    }
+    } catch (_) {}
 
     // Merge provider entry
     config['models'] ??= <String, dynamic>{};
@@ -131,7 +134,9 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
     (((config['agents'] as Map<String, dynamic>)['defaults'] as Map<String, dynamic>)['model'] as Map<String, dynamic>)['primary'] = model;
 
     const encoder = JsonEncoder.withIndent('  ');
-    await NativeBridge.writeRootfsFile(_configPath, encoder.convert(config));
+    final file = File(path);
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(encoder.convert(config));
   }
 
   /// Remove a provider's config entry and clear the active model if it
@@ -140,13 +145,11 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
     required AiProvider provider,
   }) async {
     final providerIdJson = jsonEncode(provider.id);
-    // Build a list of this provider's known model names so we can clear
-    // the active model if it matches one of them.
     final modelsJson = jsonEncode(provider.defaultModels);
 
     final script = '''
 const fs = require("fs");
-const p = "$_configPath";
+const p = process.env.HOME + "/.openclaw/openclaw.json";
 let c = {};
 try { c = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
 if (c.models && c.models.providers) {
@@ -161,9 +164,6 @@ if (c.agents && c.agents.defaults && c.agents.defaults.model) {
 }
 fs.writeFileSync(p, JSON.stringify(c, null, 2));
 ''';
-    await NativeBridge.runInProot(
-      'node -e ${_shellEscape(script)}',
-      timeout: 15,
-    );
+    await NativeBridge.runNode(['-e', script], timeout: 15);
   }
 }

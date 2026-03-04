@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import '../app.dart';
 
@@ -172,6 +173,32 @@ class _TerminalToolbarState extends State<TerminalToolbar> {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           child: Row(
             children: [
+              keyButton('ENTER', sendData: '\r', width: 56),
+              keyButton('⌫', onTap: () => widget.pty?.write(Uint8List.fromList([0x7f])), width: 44),
+              // Paste from clipboard
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                child: Material(
+                  color: btnColor,
+                  borderRadius: BorderRadius.circular(6),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () async {
+                      final data = await Clipboard.getData(Clipboard.kTextPlain);
+                      final text = data?.text;
+                      if (text != null && text.isNotEmpty) {
+                        widget.pty?.write(utf8.encode(text));
+                      }
+                    },
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 44, minHeight: 34),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Icon(Icons.content_paste, size: 16, color: textColor),
+                    ),
+                  ),
+                ),
+              ),
               keyButton('ESC', sendData: '\x1b'),
               keyButton('CTRL', onTap: _toggleCtrl, active: _ctrlActive),
               keyButton('ALT', onTap: _toggleAlt, active: _altActive),

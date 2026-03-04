@@ -1,0 +1,138 @@
+package com.openclaw.android
+
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+class GlibcRunner(
+    private val filesDir: String,
+    private val nativeLibDir: String,
+    private val glibcCompatPath: String = "$filesDir/patches/glibc-compat.js"
+) {
+    val glibcDir  = "$filesDir/glibc"
+    val nodeDir   = "$filesDir/node"
+    val pythonDir = "$filesDir/python"
+    val goDir     = "$filesDir/go"
+    // ld.so bundled in APK → extracted to nativeLibDir (executable even on GrapheneOS)
+    val ldSo     = "$nativeLibDir/libopenclaw-ld.so"
+    val nodeBin  = "$nodeDir/bin/node"
+
+    /**
+     * Write executable wrapper scripts for node/npm/openclaw into /data/local/tmp/.
+     * This directory is executable on all Android (ADB staging area), unlike filesDir
+     * which is noexec on GrapheneOS. These wrappers allow any subprocess or shell to
+     * invoke `node`, `npm`, `openclaw` via execve — not just our PTY shell functions.
+     */
+    fun installWrappers() {
+        val wrapperDir = "/data/local/tmp"
+        val wrapperContent = mapOf(
+            "node" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$nodeBin" "$@"
+""",
+            "npm" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$nodeBin" "$nodeDir/lib/node_modules/npm/bin/npm-cli.js" "$@"
+""",
+            "openclaw" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$nodeBin" "$nodeDir/bin/openclaw" "$@"
+""",
+            "python3" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib:$pythonDir/lib" "$pythonDir/bin/python3" "$@"
+""",
+            "python" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib:$pythonDir/lib" "$pythonDir/bin/python3" "$@"
+""",
+            "pip3" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib:$pythonDir/lib" "$pythonDir/bin/python3" -m pip "$@"
+""",
+            "pip" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib:$pythonDir/lib" "$pythonDir/bin/python3" -m pip "$@"
+""",
+            "go" to """#!/system/bin/sh
+export GOROOT="$goDir"
+export GOPATH="$filesDir/gopath"
+export GOCACHE="$filesDir/tmp/go-cache"
+exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/go" "$@"
+""",
+            "gofmt" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
+"""
+        )
+        for ((name, content) in wrapperContent) {
+            try {
+                val f = File("$wrapperDir/$name")
+                f.writeText(content)
+                Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "755", f.absolutePath)).waitFor()
+                android.util.Log.i("OpenclawGW", "wrapper installed: $wrapperDir/$name")
+            } catch (e: Exception) {
+                android.util.Log.w("OpenclawGW", "wrapper install failed for $name: ${e.message}")
+            }
+        }
+    }
+
+    /** Full runtime env — includes NODE_OPTIONS with glibc-compat shim */
+    fun buildEnv(): Map<String, String> = mapOf(
+        "HOME"                to filesDir,
+        "TMPDIR"              to "$filesDir/tmp",
+        "NODE_OPTIONS"        to "--require $glibcCompatPath",
+        "npm_config_prefix"   to nodeDir,
+        "npm_config_cache"    to "$filesDir/tmp/npm-cache",
+        "LD_LIBRARY_PATH"     to "$glibcDir/lib:$pythonDir/lib",
+        "UV_USE_IO_URING"     to "0",
+        "CHOKIDAR_USEPOLLING" to "true",
+        "GOROOT"              to goDir,
+        "GOPATH"              to "$filesDir/gopath",
+        "GOCACHE"             to "$filesDir/tmp/go-cache",
+        "PATH"                to "/data/local/tmp:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$filesDir/gopath/bin:/system/bin",
+    )
+
+    /** Bootstrap env — no NODE_OPTIONS, glibc-compat.js not yet in place */
+    fun buildBootstrapEnv(): Map<String, String> = mapOf(
+        "HOME"                    to filesDir,
+        "TMPDIR"                  to "$filesDir/tmp",
+        "npm_config_prefix"       to nodeDir,
+        "npm_config_cache"        to "$filesDir/tmp/npm-cache",
+
+        // /system/bin/true accepts any args and exits 0 — acts as a no-op git stub.
+        // npm prepends --no-replace-objects to all git calls; true ignores it.
+        "npm_config_git"          to "/system/bin/true",
+        "UV_USE_IO_URING"         to "0",
+        "CHOKIDAR_USEPOLLING"     to "true",
+        "PATH"                    to "$nodeDir/bin:/system/bin",
+    )
+
+    fun nodeProcessBuilder(args: List<String>, bootstrap: Boolean = false): ProcessBuilder {
+        val cmd = listOf(ldSo, "--library-path", "$glibcDir/lib", nodeBin) + args
+        val pb = ProcessBuilder(cmd)
+        pb.environment().clear()
+        pb.environment().putAll(if (bootstrap) buildBootstrapEnv() else buildEnv())
+        // Use filesDir as CWD so npm reads our package.json with overrides
+        if (bootstrap) pb.directory(java.io.File(filesDir))
+        return pb
+    }
+
+    fun runNodeSync(args: List<String>, timeout: Long = 900, bootstrap: Boolean = false): String {
+        val pb = nodeProcessBuilder(args, bootstrap)
+        pb.redirectErrorStream(true)
+        val process = pb.start()
+        val output = process.inputStream.bufferedReader().readText()
+        val exited = process.waitFor(timeout, TimeUnit.SECONDS)
+        if (!exited) { process.destroyForcibly(); throw RuntimeException("Timeout after ${timeout}s") }
+        val code = process.exitValue()
+        if (code != 0) throw RuntimeException("Exit $code: ${output.takeLast(2000)}")
+        return output
+    }
+
+    fun startGatewayProcess(): Process {
+        val openclawBin = "$nodeDir/bin/openclaw"
+        val pb = nodeProcessBuilder(listOf(
+            openclawBin, "gateway", "run",
+            "--verbose",
+            "--allow-unconfigured",
+            "--auth", "none",   // no token needed for localhost-only gateway
+            "--bind", "loopback" // loopback only — safe without auth
+        ))
+        pb.redirectErrorStream(false)
+        return pb.start()
+    }
+
+    fun isReady() = File(ldSo).exists() && File(nodeBin).exists()
+}

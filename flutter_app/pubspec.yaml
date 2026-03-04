@@ -37,6 +37,8 @@ flutter:
     - assets/bionic_bypass.js
     - assets/resolv.conf
     - assets/ic_launcher.png
+    - assets/patches/glibc-compat.js
+    - assets/patches/libsignal.tgz
   fonts:
     - family: DejaVuSansMono
       fonts:

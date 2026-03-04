@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../constants.dart';
 import '../models/gateway_state.dart';
@@ -40,31 +39,11 @@ class GatewayService {
     await prefs.init();
     final savedUrl = prefs.dashboardUrl;
 
-    // Always ensure directories and resolv.conf exist on app open.
-    // Android may clear the files directory during an app update (#40).
+    // Ensure directories exist on app open.
     try { await NativeBridge.setupDirs(); } catch (_) {}
-    try { await NativeBridge.writeResolv(); } catch (_) {}
-    // Dart dart:io fallback if native calls failed (#40).
-    try {
-      final filesDir = await NativeBridge.getFilesDir();
-      const resolvContent = 'nameserver 8.8.8.8\nnameserver 8.8.4.4\n';
-      final resolvFile = File('$filesDir/config/resolv.conf');
-      if (!resolvFile.existsSync()) {
-        Directory('$filesDir/config').createSync(recursive: true);
-        resolvFile.writeAsStringSync(resolvContent);
-      }
-      // Also write into rootfs /etc/ so DNS works even if bind-mount fails
-      final rootfsResolv = File('$filesDir/rootfs/ubuntu/etc/resolv.conf');
-      if (!rootfsResolv.existsSync()) {
-        rootfsResolv.parent.createSync(recursive: true);
-        rootfsResolv.writeAsStringSync(resolvContent);
-      }
-    } catch (_) {}
 
     final alreadyRunning = await NativeBridge.isGatewayRunning();
     if (alreadyRunning) {
-      // Write allowCommands config so the next gateway restart picks it up,
-      // and in case the running gateway supports config hot-reload.
       await _writeNodeAllowConfig();
       _updateState(_state.copyWith(
         status: GatewayStatus.starting,
@@ -101,9 +80,26 @@ class GatewayService {
     });
   }
 
-  /// Patch /root/.openclaw/openclaw.json to clear denyCommands and set
-  /// allowCommands for all node capabilities. This is the config file the
-  /// gateway actually reads (not a separate gateway.json).
+  /// Patch the openclaw config to clear denyCommands and set allowCommands
+  /// for all node capabilities.
+  Future<void> _autoSaveGatewayToken() async {
+    // Wait a bit for the gateway to write its config
+    await Future.delayed(const Duration(seconds: 5));
+    try {
+      final token = await NativeBridge.readGatewayToken();
+      if (token.isNotEmpty) {
+        final prefs = PreferencesService();
+        await prefs.init();
+        if ((prefs.nodeGatewayToken ?? '').isEmpty) {
+          prefs.nodeGatewayToken = token;
+          _updateState(_state.copyWith(
+            logs: [..._state.logs, '[INFO] Gateway token auto-saved to settings'],
+          ));
+        }
+      }
+    } catch (_) {}
+  }
+
   Future<void> _writeNodeAllowConfig() async {
     const allowCommands = [
       'camera.snap', 'camera.clip', 'camera.list',
@@ -114,33 +110,57 @@ class GatewayService {
       'sensor.read', 'sensor.list',
       'haptic.vibrate',
     ];
-    // Use a Node.js one-liner to safely merge into existing openclaw.json
-    // without clobbering other settings (API keys, onboarding config, etc.)
     final allowJson = jsonEncode(allowCommands);
     final script = '''
 const fs = require("fs");
-const p = "/root/.openclaw/openclaw.json";
+const p = process.env.HOME + "/.openclaw/openclaw.json";
 let c = {};
 try { c = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
 if (!c.gateway) c.gateway = {};
 if (!c.gateway.nodes) c.gateway.nodes = {};
 c.gateway.nodes.denyCommands = [];
 c.gateway.nodes.allowCommands = $allowJson;
+// Set gateway.mode=local if not already set
+if (!c.gateway.mode) c.gateway.mode = "local";
+// Migrate legacy agent.* → agents.defaults.*
+if (c.agent) { if (!c.agents) c.agents = {}; if (!c.agents.defaults) c.agents.defaults = {}; Object.assign(c.agents.defaults, c.agent); delete c.agent; }
+// Detect available providers
+const zaiCfg = c.models && c.models.providers && c.models.providers.zai;
+const hasZai = zaiCfg && zaiCfg.apiKey;
+const groqCfg = c.models && c.models.providers && c.models.providers.groq;
+const hasGroq = groqCfg && groqCfg.apiKey;
+// Set default model if not set
+if (!c.agents) c.agents = {};
+if (!c.agents.defaults) c.agents.defaults = {};
+if (!c.agents.defaults.model) {
+  if (hasZai) c.agents.defaults.model = "zai/glm-4.7";
+  else if (hasGroq) c.agents.defaults.model = "groq/llama-3.3-70b-versatile";
+}
 fs.writeFileSync(p, JSON.stringify(c, null, 2));
+// Write auth-profiles.json for the main agent so it can authenticate API calls
+const agentDir = process.env.HOME + "/.openclaw/agents/main/agent";
+fs.mkdirSync(agentDir, { recursive: true });
+const authFile = agentDir + "/auth-profiles.json";
+let auth = {};
+try { auth = JSON.parse(fs.readFileSync(authFile, "utf8")); } catch {}
+if (hasZai && !auth["zai:default"]) {
+  auth["zai:default"] = { provider: "zai", mode: "api_key", apiKey: zaiCfg.apiKey };
+}
+if (hasGroq && !auth["groq:default"]) {
+  auth["groq:default"] = { provider: "groq", mode: "api_key", apiKey: groqCfg.apiKey };
+}
+// Also check env vars as fallback
+const envZai = process.env.ZAI_API_KEY;
+const envGroq = process.env.GROQ_API_KEY;
+if (envZai && !auth["zai:default"]) auth["zai:default"] = { provider: "zai", mode: "api_key", apiKey: envZai };
+if (envGroq && !auth["groq:default"]) auth["groq:default"] = { provider: "groq", mode: "api_key", apiKey: envGroq };
+fs.writeFileSync(authFile, JSON.stringify(auth, null, 2));
 ''';
     try {
-      await NativeBridge.runInProot(
-        'node -e ${_shellEscape(script)}',
-        timeout: 15,
-      );
+      await NativeBridge.runNode(['-e', script], timeout: 15);
     } catch (_) {
       // Non-fatal: gateway may still work with default policy
     }
-  }
-
-  /// Escape a string for use as a single-quoted shell argument.
-  static String _shellEscape(String s) {
-    return "'${s.replaceAll("'", "'\\''")}'";
   }
 
   Future<void> start() async {
@@ -156,30 +176,15 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
     ));
 
     try {
-      // Ensure directories exist — Android may have cleared them (#40).
-      // Non-fatal: the GatewayService foreground service also creates them.
+      // Ensure directories exist — Android may have cleared them.
       try { await NativeBridge.setupDirs(); } catch (_) {}
-      try { await NativeBridge.writeResolv(); } catch (_) {}
-      // Dart dart:io fallback if native calls failed (#40).
-      try {
-        final filesDir = await NativeBridge.getFilesDir();
-        const resolvContent = 'nameserver 8.8.8.8\nnameserver 8.8.4.4\n';
-        final resolvFile = File('$filesDir/config/resolv.conf');
-        if (!resolvFile.existsSync()) {
-          Directory('$filesDir/config').createSync(recursive: true);
-          resolvFile.writeAsStringSync(resolvContent);
-        }
-        // Also write into rootfs /etc/ so DNS works even if bind-mount fails
-        final rootfsResolv = File('$filesDir/rootfs/ubuntu/etc/resolv.conf');
-        if (!rootfsResolv.existsSync()) {
-          rootfsResolv.parent.createSync(recursive: true);
-          rootfsResolv.writeAsStringSync(resolvContent);
-        }
-      } catch (_) {}
       await _writeNodeAllowConfig();
       await NativeBridge.startGateway();
       _subscribeLogs();
       _startHealthCheck();
+      // After gateway starts, read the auto-generated token and save to prefs
+      // so the Voice screen can connect without manual token entry
+      _autoSaveGatewayToken();
     } catch (e) {
       _updateState(_state.copyWith(
         status: GatewayStatus.error,
@@ -229,7 +234,6 @@ fs.writeFileSync(p, JSON.stringify(c, null, 2));
         ));
       }
     } catch (_) {
-      // Still starting or temporarily unreachable
       final isRunning = await NativeBridge.isGatewayRunning();
       if (!isRunning && _state.status != GatewayStatus.stopped) {
         _updateState(_state.copyWith(

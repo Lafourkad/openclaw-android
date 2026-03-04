@@ -1,10 +1,10 @@
 enum SetupStep {
   checkingStatus,
-  downloadingRootfs,
-  extractingRootfs,
-  installingNode,
+  downloadingGlibc,
+  downloadingNode,
   installingOpenClaw,
-  configuringBypass,
+  installingPython,
+  installingGo,
   complete,
   error,
 }
@@ -43,16 +43,16 @@ class SetupState {
     switch (step) {
       case SetupStep.checkingStatus:
         return 'Checking status...';
-      case SetupStep.downloadingRootfs:
-        return 'Downloading Ubuntu rootfs';
-      case SetupStep.extractingRootfs:
-        return 'Extracting rootfs';
-      case SetupStep.installingNode:
+      case SetupStep.downloadingGlibc:
+        return 'Downloading glibc runtime';
+      case SetupStep.downloadingNode:
         return 'Installing Node.js';
       case SetupStep.installingOpenClaw:
         return 'Installing OpenClaw';
-      case SetupStep.configuringBypass:
-        return 'Configuring Bionic Bypass';
+      case SetupStep.installingPython:
+        return 'Installing Python 3.13';
+      case SetupStep.installingGo:
+        return 'Installing Go';
       case SetupStep.complete:
         return 'Setup complete';
       case SetupStep.error:
@@ -64,15 +64,15 @@ class SetupState {
     switch (step) {
       case SetupStep.checkingStatus:
         return 0;
-      case SetupStep.downloadingRootfs:
+      case SetupStep.downloadingGlibc:
         return 1;
-      case SetupStep.extractingRootfs:
+      case SetupStep.downloadingNode:
         return 2;
-      case SetupStep.installingNode:
-        return 3;
       case SetupStep.installingOpenClaw:
+        return 3;
+      case SetupStep.installingPython:
         return 4;
-      case SetupStep.configuringBypass:
+      case SetupStep.installingGo:
         return 5;
       case SetupStep.complete:
         return 6;
@@ -81,5 +81,5 @@ class SetupState {
     }
   }
 
-  static const int totalSteps = 6;
+  static const int totalSteps = 5;
 }

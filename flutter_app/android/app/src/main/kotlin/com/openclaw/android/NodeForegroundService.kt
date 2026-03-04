@@ -1,4 +1,4 @@
-package com.nxg.openclawproot
+package com.openclaw.android
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -11,16 +11,16 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
-class SetupService : Service() {
+class NodeForegroundService : Service() {
     companion object {
-        const val CHANNEL_ID = "openclaw_setup"
+        const val CHANNEL_ID = "openclaw_node"
         const val NOTIFICATION_ID = 3
         var isRunning = false
             private set
-        private var instance: SetupService? = null
+        private var instance: NodeForegroundService? = null
 
         fun start(context: Context) {
-            val intent = Intent(context, SetupService::class.java)
+            val intent = Intent(context, NodeForegroundService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -29,16 +29,17 @@ class SetupService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, SetupService::class.java)
+            val intent = Intent(context, NodeForegroundService::class.java)
             context.stopService(intent)
         }
 
-        fun updateNotification(text: String, progress: Int = -1) {
-            instance?.updateNotificationWith(text, progress)
+        fun updateStatus(text: String) {
+            instance?.updateNotification(text)
         }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var startTime: Long = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,7 +51,8 @@ class SetupService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         isRunning = true
         instance = this
-        startForeground(NOTIFICATION_ID, buildNotification("Setting up environment...", -1))
+        startTime = System.currentTimeMillis()
+        startForeground(NOTIFICATION_ID, buildNotification("Node connected"))
         acquireWakeLock()
         return START_STICKY
     }
@@ -62,13 +64,20 @@ class SetupService : Service() {
         super.onDestroy()
     }
 
+    private fun updateNotification(text: String) {
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, buildNotification(text))
+        } catch (_: Exception) {}
+    }
+
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
-            "OpenClaw::SetupWakeLock"
+            "OpenClaw::NodeWakeLock"
         )
-        wakeLock?.acquire(60 * 60 * 1000L) // 1 hour max
+        wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
     }
 
     private fun releaseWakeLock() {
@@ -82,21 +91,17 @@ class SetupService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "OpenClaw Setup",
+                "OpenClawX Node",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows progress during OpenClaw environment setup"
+                description = "Keeps the OpenClawX Node connected in the background"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
     }
 
-    /**
-     * Build notification with optional progress bar.
-     * @param progress 0-100 for determinate bar, -1 for indeterminate spinner
-     */
-    private fun buildNotification(text: String, progress: Int): Notification {
+    private fun buildNotification(text: String): Notification {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent,
@@ -110,25 +115,18 @@ class SetupService : Service() {
             Notification.Builder(this)
         }
 
-        builder.setContentTitle("OpenClaw Setup")
+        builder.setContentTitle("OpenClawX Node")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
 
-        if (progress in 0..100) {
-            builder.setProgress(100, progress, false)
-        } else {
-            builder.setProgress(0, 0, true)
+        if (startTime > 0) {
+            builder.setWhen(startTime)
+            builder.setShowWhen(true)
+            builder.setUsesChronometer(true)
         }
 
         return builder.build()
-    }
-
-    fun updateNotificationWith(text: String, progress: Int) {
-        try {
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, buildNotification(text, progress))
-        } catch (_: Exception) {}
     }
 }

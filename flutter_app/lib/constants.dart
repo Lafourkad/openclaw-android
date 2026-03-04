@@ -1,36 +1,38 @@
 class AppConstants {
   static const String appName = 'OpenClaw';
   static const String version = '1.8.2';
-  static const String packageName = 'com.nxg.openclawproot';
+  static const String packageName = 'com.openclaw.android';
 
   /// Matches ANSI escape sequences (e.g. color codes in terminal output).
   static final ansiEscape = RegExp(r'\x1b\[[0-9;]*[a-zA-Z]');
 
-  static const String authorName = 'Mithun Gowda B';
-  static const String authorEmail = 'mithungowda.b7411@gmail.com';
-  static const String githubUrl = 'https://github.com/mithun50/openclaw-termux';
+  // Credits
+  static const String authorName = 'Grug';
+  static const String authorXUrl = 'https://x.com/0xGrug';
+  static const String githubUrl = 'https://github.com/openclaw/openclaw';
   static const String license = 'MIT';
 
-  // NextGenX
-  static const String orgName = 'NextGenX';
-  static const String orgEmail = 'nxgextra@gmail.com';
-  static const String instagramUrl = 'https://www.instagram.com/nexgenxplorer_nxg';
-  static const String youtubeUrl = 'https://youtube.com/@nexgenxplorer?si=UG-wBC8UIyeT4bbw';
-  static const String playStoreUrl = 'https://play.google.com/store/apps/dev?id=8262374975871504599';
+  // Based on openclaw-termux by Mithun Gowda B
+  static const String upstreamName = 'Mithun Gowda B';
+  static const String upstreamUrl = 'https://github.com/mithun50/openclaw-termux';
+
+  // glibc runtime approach by Aidan Park
+  static const String glibcCreditName = 'Aidan Park';
+  static const String glibcCreditUrl = 'https://github.com/AidanPark/openclaw-android';
 
   static const String gatewayHost = '127.0.0.1';
   static const int gatewayPort = 18789;
   static const String gatewayUrl = 'http://$gatewayHost:$gatewayPort';
 
-  static const String ubuntuRootfsUrl =
-      'https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-';
-  static const String rootfsArm64 = '${ubuntuRootfsUrl}arm64.tar.gz';
-  static const String rootfsArmhf = '${ubuntuRootfsUrl}armhf.tar.gz';
-  static const String rootfsAmd64 = '${ubuntuRootfsUrl}amd64.tar.gz';
+  // glibc runtime — downloaded during bootstrap
+  static const String glibcDebUrl =
+      'https://packages-cf.termux.dev/apt/termux-glibc/pool/stable/g/glibc/glibc_2.42_aarch64.deb';
+  // GCC runtime libs (libstdc++.so.6, libgcc_s.so.1) — needed by Node.js
+  static const String gccLibsDebUrl =
+      'https://packages-cf.termux.dev/apt/termux-glibc/pool/stable/g/gcc-libs-glibc/gcc-libs-glibc_14.2.1-1_aarch64.deb';
 
   // Node.js binary tarball — downloaded directly by Flutter, extracted by Java.
-  // Bypasses curl/gpg/NodeSource which fail inside proot.
-  static const String nodeVersion = '22.13.1';
+  static const String nodeVersion = '22.14.0';
   static const String nodeBaseUrl =
       'https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-linux-';
 
@@ -47,6 +49,16 @@ class AppConstants {
     }
   }
 
+  // Python standalone build (astral-sh/python-build-standalone)
+  static const String pythonVersion = '3.13.12';
+  static const String pythonUrl =
+      'https://github.com/astral-sh/python-build-standalone/releases/download/20260303/cpython-3.13.12%2B20260303-aarch64-unknown-linux-gnu-install_only.tar.gz';
+
+  // Go toolchain (official)
+  static const String goVersion = '1.26.0';
+  static const String goUrl =
+      'https://go.dev/dl/go1.26.0.linux-arm64.tar.gz';
+
   static const int healthCheckIntervalMs = 5000;
   static const int maxAutoRestarts = 3;
 
@@ -57,19 +69,6 @@ class AppConstants {
   static const String nodeRole = 'node';
   static const int pairingTimeoutMs = 300000;
 
-  static const String channelName = 'com.nxg.openclawproot/native';
-  static const String eventChannelName = 'com.nxg.openclawproot/gateway_logs';
-
-  static String getRootfsUrl(String arch) {
-    switch (arch) {
-      case 'aarch64':
-        return rootfsArm64;
-      case 'arm':
-        return rootfsArmhf;
-      case 'x86_64':
-        return rootfsAmd64;
-      default:
-        return rootfsArm64;
-    }
-  }
+  static const String channelName = 'com.openclaw.android/native';
+  static const String eventChannelName = 'com.openclaw.android/gateway_logs';
 }

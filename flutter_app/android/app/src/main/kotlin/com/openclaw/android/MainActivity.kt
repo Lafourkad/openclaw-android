@@ -1,4 +1,4 @@
-package com.nxg.openclawproot
+package com.openclaw.android
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -32,11 +32,10 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.nxg.openclawproot/native"
-    private val EVENT_CHANNEL = "com.nxg.openclawproot/gateway_logs"
+    private val CHANNEL = "com.openclaw.android/native"
+    private val EVENT_CHANNEL = "com.openclaw.android/gateway_logs"
 
     private lateinit var bootstrapManager: BootstrapManager
-    private lateinit var processManager: ProcessManager
     private var screenCaptureResult: MethodChannel.Result? = null
     private var screenCaptureDurationMs: Long = 5000L
 
@@ -47,25 +46,43 @@ class MainActivity : FlutterActivity() {
         val nativeLibDir = applicationContext.applicationInfo.nativeLibraryDir
 
         bootstrapManager = BootstrapManager(applicationContext, filesDir, nativeLibDir)
-        processManager = ProcessManager(filesDir, nativeLibDir)
 
-        // Ensure directories and resolv.conf exist on every app start.
-        // Android may clear filesDir during APK update (#40).
+        // Ensure directories exist on every app start.
         Thread {
-            try { bootstrapManager.setupDirectories() } catch (_: Exception) {}
-            try { bootstrapManager.writeResolvConf() } catch (_: Exception) {}
+            try {
+                bootstrapManager.setupDirectories()
+                // Always ensure glibc-compat.js is present (needed by gateway at runtime)
+                bootstrapManager.copyGlibcCompat(applicationContext)
+            } catch (_: Exception) {}
         }.start()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "getProotPath" -> {
-                    result.success(processManager.getProotPath())
-                }
                 "getArch" -> {
                     result.success(ArchUtils.getArch())
                 }
                 "getFilesDir" -> {
                     result.success(filesDir)
+                }
+                "copyNpmLogToExternal" -> {
+                    Thread {
+                        try {
+                            val logsDir = java.io.File("$filesDir/tmp/npm-cache/_logs")
+                            val logs = logsDir.listFiles()?.sortedBy { it.name } ?: emptyList()
+                            if (logs.isNotEmpty()) {
+                                val src = logs.last()
+                                val extDir = applicationContext.getExternalFilesDir(null)
+                                extDir?.mkdirs()
+                                val dst = java.io.File(extDir, "npm-debug-last.log")
+                                src.copyTo(dst, overwrite = true)
+                                runOnUiThread { result.success(dst.absolutePath) }
+                            } else {
+                                runOnUiThread { result.success(null) }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("LOG_COPY_ERROR", e.message, null) }
+                        }
+                    }.start()
                 }
                 "getNativeLibDir" -> {
                     result.success(nativeLibDir)
@@ -73,38 +90,203 @@ class MainActivity : FlutterActivity() {
                 "isBootstrapComplete" -> {
                     result.success(bootstrapManager.isBootstrapComplete())
                 }
+                "importMigrateConfig" -> {
+                    // Copy /sdcard/openclaw-migrate.json → filesDir/.openclaw/openclaw.json
+                    Thread {
+                        try {
+                            val sdcard = android.os.Environment.getExternalStorageDirectory()
+                            val migrateFile = java.io.File(sdcard, "openclaw-migrate.json")
+                            if (!migrateFile.exists()) {
+                                runOnUiThread { result.error("NOT_FOUND", "openclaw-migrate.json not found on sdcard", null) }
+                                return@Thread
+                            }
+                            val configDir = java.io.File("$filesDir/.openclaw")
+                            configDir.mkdirs()
+                            migrateFile.copyTo(java.io.File(configDir, "openclaw.json"), overwrite = true)
+                            runOnUiThread { result.success("ok") }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("IMPORT_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "readGatewayToken" -> {
+                    // Read the gateway auth token from openclaw.json config file
+                    Thread {
+                        try {
+                            val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
+                            if (configFile.exists()) {
+                                val json = configFile.readText()
+                                // Extract auth.token value with simple regex (no JSON lib needed)
+                                val match = Regex(""""token"\s*:\s*"([^"]+)"""").find(json)
+                                runOnUiThread { result.success(match?.groupValues?.get(1) ?: "") }
+                            } else {
+                                runOnUiThread { result.success("") }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.success("") }
+                        }
+                    }.start()
+                }
                 "getBootstrapStatus" -> {
                     result.success(bootstrapManager.getBootstrapStatus())
                 }
-                "extractRootfs" -> {
+                "setupDirs" -> {
+                    Thread {
+                        try {
+                            bootstrapManager.setupDirectories()
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("SETUP_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "extractGlibcDeb" -> {
                     val tarPath = call.argument<String>("tarPath")
                     if (tarPath != null) {
                         Thread {
                             try {
-                                bootstrapManager.extractRootfs(tarPath)
+                                bootstrapManager.extractGlibcDeb(tarPath)
                                 runOnUiThread { result.success(true) }
                             } catch (e: Exception) {
-                                runOnUiThread { result.error("EXTRACT_ERROR", e.message, null) }
+                                runOnUiThread { result.error("GLIBC_EXTRACT_ERROR", e.message, null) }
                             }
                         }.start()
                     } else {
                         result.error("INVALID_ARGS", "tarPath required", null)
                     }
                 }
-                "runInProot" -> {
-                    val command = call.argument<String>("command")
-                    val timeout = call.argument<Int>("timeout")?.toLong() ?: 900L
-                    if (command != null) {
+                "extractNodeTarball" -> {
+                    val tarPath = call.argument<String>("tarPath")
+                    if (tarPath != null) {
                         Thread {
                             try {
-                                val output = processManager.runInProotSync(command, timeout)
-                                runOnUiThread { result.success(output) }
+                                bootstrapManager.extractNodeTarball(tarPath)
+                                runOnUiThread { result.success(true) }
                             } catch (e: Exception) {
-                                runOnUiThread { result.error("PROOT_ERROR", e.message, null) }
+                                runOnUiThread { result.error("NODE_EXTRACT_ERROR", e.message, null) }
                             }
                         }.start()
                     } else {
-                        result.error("INVALID_ARGS", "command required", null)
+                        result.error("INVALID_ARGS", "tarPath required", null)
+                    }
+                }
+                "patchGlibcPaths" -> {
+                    Thread {
+                        try {
+                            bootstrapManager.patchGlibcPaths()
+                            bootstrapManager.setupGlibcEtc()
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("PATCH_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "writeNpmOverrides" -> {
+                    Thread {
+                        try {
+                            bootstrapManager.writeNpmOverrides()
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("PATCH_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "patchNpmGit" -> {
+                    Thread {
+                        try {
+                            bootstrapManager.patchNpmGit()
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("PATCH_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "copyGlibcCompat" -> {
+                    Thread {
+                        try {
+                            bootstrapManager.copyGlibcCompat(applicationContext)
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("COPY_COMPAT_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "isPythonInstalled" -> {
+                    result.success(bootstrapManager.isPythonInstalled())
+                }
+                "isGoInstalled" -> {
+                    result.success(bootstrapManager.isGoInstalled())
+                }
+                "extractPythonTarball" -> {
+                    val tarPath = call.argument<String>("tarPath")
+                    if (tarPath != null) {
+                        Thread {
+                            try {
+                                bootstrapManager.extractPythonTarball(tarPath)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("PYTHON_EXTRACT_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "tarPath required", null)
+                    }
+                }
+                "extractGoTarball" -> {
+                    val tarPath = call.argument<String>("tarPath")
+                    if (tarPath != null) {
+                        Thread {
+                            try {
+                                bootstrapManager.extractGoTarball(tarPath)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("GO_EXTRACT_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "tarPath required", null)
+                    }
+                }
+                "markBootstrapDone" -> {
+                    try {
+                        bootstrapManager.markBootstrapDone()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("MARK_DONE_ERROR", e.message, null)
+                    }
+                }
+                "runNode" -> {
+                    val args = call.argument<List<String>>("args")
+                    val timeout = call.argument<Int>("timeout")?.toLong() ?: 900L
+                    if (args != null) {
+                        Thread {
+                            try {
+                                val runner = GlibcRunner(filesDir, nativeLibDir)
+                                val output = runner.runNodeSync(args, timeout)
+                                runOnUiThread { result.success(output) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("NODE_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "args required", null)
+                    }
+                }
+                "runNodeBootstrap" -> {
+                    val args = call.argument<List<String>>("args")
+                    val timeout = call.argument<Int>("timeout")?.toLong() ?: 1800L
+                    if (args != null) {
+                        Thread {
+                            try {
+                                val runner = GlibcRunner(filesDir, nativeLibDir)
+                                val output = runner.runNodeSync(args, timeout, bootstrap = true)
+                                runOnUiThread { result.success(output) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("NODE_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "args required", null)
                     }
                 }
                 "startGateway" -> {
@@ -195,24 +377,6 @@ class MainActivity : FlutterActivity() {
                 "getDeviceIps" -> {
                     result.success(SshForegroundService.getDeviceIps())
                 }
-                "setRootPassword" -> {
-                    val password = call.argument<String>("password")
-                    if (password != null) {
-                        Thread {
-                            try {
-                                val escaped = password.replace("'", "'\\''")
-                                processManager.runInProotSync(
-                                    "echo 'root:$escaped' | chpasswd", 15
-                                )
-                                runOnUiThread { result.success(true) }
-                            } catch (e: Exception) {
-                                runOnUiThread { result.error("SSH_ERROR", e.message, null) }
-                            }
-                        }.start()
-                    } else {
-                        result.error("INVALID_ARGS", "password required", null)
-                    }
-                }
                 "requestBatteryOptimization" -> {
                     try {
                         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -227,76 +391,6 @@ class MainActivity : FlutterActivity() {
                 "isBatteryOptimized" -> {
                     val pm = getSystemService(POWER_SERVICE) as PowerManager
                     result.success(!pm.isIgnoringBatteryOptimizations(packageName))
-                }
-                "setupDirs" -> {
-                    Thread {
-                        try {
-                            bootstrapManager.setupDirectories()
-                            runOnUiThread { result.success(true) }
-                        } catch (e: Exception) {
-                            runOnUiThread { result.error("SETUP_ERROR", e.message, null) }
-                        }
-                    }.start()
-                }
-                "installBionicBypass" -> {
-                    Thread {
-                        try {
-                            bootstrapManager.installBionicBypass()
-                            runOnUiThread { result.success(true) }
-                        } catch (e: Exception) {
-                            runOnUiThread { result.error("BYPASS_ERROR", e.message, null) }
-                        }
-                    }.start()
-                }
-                "writeResolv" -> {
-                    Thread {
-                        try {
-                            bootstrapManager.writeResolvConf()
-                            runOnUiThread { result.success(true) }
-                        } catch (e: Exception) {
-                            runOnUiThread { result.error("RESOLV_ERROR", e.message, null) }
-                        }
-                    }.start()
-                }
-                "extractDebPackages" -> {
-                    Thread {
-                        try {
-                            val count = bootstrapManager.extractDebPackages()
-                            runOnUiThread { result.success(count) }
-                        } catch (e: Exception) {
-                            runOnUiThread { result.error("DEB_EXTRACT_ERROR", e.message, null) }
-                        }
-                    }.start()
-                }
-                "extractNodeTarball" -> {
-                    val tarPath = call.argument<String>("tarPath")
-                    if (tarPath != null) {
-                        Thread {
-                            try {
-                                bootstrapManager.extractNodeTarball(tarPath)
-                                runOnUiThread { result.success(true) }
-                            } catch (e: Exception) {
-                                runOnUiThread { result.error("NODE_EXTRACT_ERROR", e.message, null) }
-                            }
-                        }.start()
-                    } else {
-                        result.error("INVALID_ARGS", "tarPath required", null)
-                    }
-                }
-                "createBinWrappers" -> {
-                    val packageName = call.argument<String>("packageName")
-                    if (packageName != null) {
-                        Thread {
-                            try {
-                                bootstrapManager.createBinWrappers(packageName)
-                                runOnUiThread { result.success(true) }
-                            } catch (e: Exception) {
-                                runOnUiThread { result.error("BIN_WRAPPER_ERROR", e.message, null) }
-                            }
-                        }.start()
-                    } else {
-                        result.error("INVALID_ARGS", "packageName required", null)
-                    }
                 }
                 "startSetupService" -> {
                     try {
@@ -394,13 +488,11 @@ class MainActivity : FlutterActivity() {
                 "requestStoragePermission" -> {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            // Android 11+: MANAGE_EXTERNAL_STORAGE
                             if (!Environment.isExternalStorageManager()) {
                                 val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                                 startActivity(intent)
                             }
                         } else {
-                            // Android 10 and below: READ/WRITE_EXTERNAL_STORAGE
                             ActivityCompat.requestPermissions(
                                 this,
                                 arrayOf(
@@ -426,35 +518,15 @@ class MainActivity : FlutterActivity() {
                 "getExternalStoragePath" -> {
                     result.success(Environment.getExternalStorageDirectory().absolutePath)
                 }
-                "readRootfsFile" -> {
-                    val path = call.argument<String>("path")
-                    if (path != null) {
-                        Thread {
-                            try {
-                                val content = bootstrapManager.readRootfsFile(path)
-                                runOnUiThread { result.success(content) }
-                            } catch (e: Exception) {
-                                runOnUiThread { result.error("ROOTFS_READ_ERROR", e.message, null) }
-                            }
-                        }.start()
-                    } else {
-                        result.error("INVALID_ARGS", "path required", null)
-                    }
-                }
-                "writeRootfsFile" -> {
-                    val path = call.argument<String>("path")
-                    val content = call.argument<String>("content")
-                    if (path != null && content != null) {
-                        Thread {
-                            try {
-                                bootstrapManager.writeRootfsFile(path, content)
-                                runOnUiThread { result.success(true) }
-                            } catch (e: Exception) {
-                                runOnUiThread { result.error("ROOTFS_WRITE_ERROR", e.message, null) }
-                            }
-                        }.start()
-                    } else {
-                        result.error("INVALID_ARGS", "path and content required", null)
+                "openTermux" -> {
+                    try {
+                        val intent = packageManager.getLaunchIntentForPackage("com.termux")
+                            ?: Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.termux"))
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("TERMUX_ERROR", e.message, null)
                     }
                 }
                 "readSensor" -> {
