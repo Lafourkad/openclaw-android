@@ -1,5 +1,7 @@
 # OpenClaw for Android
 
+[![Download APK](https://img.shields.io/github/v/release/Lafourkad/openclaw-android?label=Download%20APK&style=for-the-badge)](https://github.com/Lafourkad/openclaw-android/releases/latest/download/openclaw-android.apk)
+
 Run [OpenClaw](https://openclaw.ai) natively on Android — no root, no Termux, no Ubuntu required.
 
 ## What is this?
