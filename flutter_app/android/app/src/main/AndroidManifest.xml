@@ -2,6 +2,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Node.js V8 JIT requires creating executable memory pages (EXECMEM).
+         GrapheneOS blocks this by default — user must enable "Allow JIT memory"
+         in Settings → Apps → OpenClaw → Exploit protection. -->
+    <uses-permission android:name="android.permission.DYNAMIC_CODE_LOADING" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
@@ -24,6 +28,7 @@
         android:label="OpenClaw"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowNativeHeapPointerTagging="false"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true">
