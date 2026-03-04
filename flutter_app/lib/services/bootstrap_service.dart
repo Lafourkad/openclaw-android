@@ -184,38 +184,32 @@ class BootstrapService {
       final npmCli =
           '$filesDir/node/lib/node_modules/npm/bin/npm-cli.js';
       // Use runNodeBootstrap — no NODE_OPTIONS, glibc-compat.js copied after
-      try {
-        await NativeBridge.runNodeBootstrap(
-          [npmCli, 'install', '-g', 'openclaw', '--ignore-scripts', '--loglevel=verbose'],
-          timeout: 1800,
-        );
-      } catch (npmErr) {
-        // Copy log to external storage so ADB can pull it
-        try { await NativeBridge.copyNpmLogToExternal(); } catch (_) {}
-        // Filter npm debug log for error/warn lines only
-        String logContent = '';
+      // Try up to 3 times — heap corruption (exit 134) is non-deterministic on some devices
+      Exception? lastNpmErr;
+      for (int attempt = 1; attempt <= 3; attempt++) {
         try {
-          final logsDir = Directory('$filesDir/tmp/npm-cache/_logs');
-          if (logsDir.existsSync()) {
-            final logs = logsDir.listSync().whereType<File>().toList()
-              ..sort((a, b) => a.path.compareTo(b.path));
-            if (logs.isNotEmpty) {
-              final lines = logs.last.readAsLinesSync();
-              // Show last 40 lines + all error/warn lines
-              final errLines = lines.where((l) {
-                final lower = l.toLowerCase();
-                return lower.contains(' error ') || lower.contains(' warn ');
-              }).toList();
-              final last40 = lines.length > 40 ? lines.sublist(lines.length - 40) : lines;
-              final combined = {...errLines, ...last40}.toList();
-              logContent = combined.join('\n');
-              if (logContent.length > 5000) {
-                logContent = logContent.substring(logContent.length - 5000);
-              }
-            }
+          if (attempt > 1) {
+            _updateSetupNotification('Retrying npm install (attempt $attempt/3)...', progress: 75);
+            onProgress(SetupState(
+              step: SetupStep.installingOpenClaw,
+              progress: 0.0,
+              message: 'Retrying install (attempt $attempt/3)...',
+            ));
+            await Future.delayed(const Duration(seconds: 3));
           }
-        } catch (_) {}
-        throw Exception('npm[$npmErr]\n$logContent');
+          await NativeBridge.runNodeBootstrap(
+            [npmCli, 'install', '-g', 'openclaw', '--ignore-scripts'],
+            timeout: 1800,
+          );
+          lastNpmErr = null;
+          break;
+        } catch (e) {
+          lastNpmErr = Exception(e.toString());
+        }
+      }
+      if (lastNpmErr != null) {
+        try { await NativeBridge.copyNpmLogToExternal(); } catch (_) {}
+        throw Exception('npm install failed after 3 attempts: $lastNpmErr');
       }
 
       _updateSetupNotification('Verifying OpenClaw...', progress: 95);

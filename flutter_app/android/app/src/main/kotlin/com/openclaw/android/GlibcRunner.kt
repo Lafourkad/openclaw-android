@@ -97,11 +97,16 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
         "UV_USE_IO_URING"         to "0",
         "CHOKIDAR_USEPOLLING"     to "true",
 
-        // Limit glibc malloc arenas to 1 — prevents heap corruption on stock Android
-        // (multi-arena malloc + bionic interaction causes "corrupted size vs. prev_size")
+        // Limit glibc malloc to 1 arena — prevents heap corruption on GrapheneOS/stock Android
+        // ("corrupted size vs. prev_size" is caused by concurrent multi-arena malloc)
         "MALLOC_ARENA_MAX"        to "1",
-        // Cap Node.js heap to 512MB during bootstrap — reduces memory pressure
+        "MALLOC_MMAP_THRESHOLD_"  to "131072",  // 128KB — more aggressive mmap, less sbrk
+        // Cap Node.js heap and reduce thread pool during bootstrap
         "NODE_OPTIONS"            to "--max-old-space-size=512",
+        "UV_THREADPOOL_SIZE"      to "2",       // fewer worker threads = fewer concurrent mallocs
+        // Limit npm network concurrency
+        "npm_config_maxsockets"   to "4",
+        "npm_config_network_concurrency" to "4",
 
         "PATH"                    to "$nodeDir/bin:/system/bin",
     )
