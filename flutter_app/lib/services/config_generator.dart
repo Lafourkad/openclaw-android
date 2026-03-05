@@ -182,7 +182,6 @@ class ConfigGenerator {
       'defaults': {
         'model': {'primary': providerModelRef},
         'compaction': {'mode': 'safeguard'},
-        'blockStreamingDefault': 'off',
         'maxConcurrent': 4,
       },
       'list': [
