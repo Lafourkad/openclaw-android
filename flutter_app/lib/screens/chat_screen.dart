@@ -167,11 +167,12 @@ class _ChatScreenState extends State<ChatScreen> {
         request.headers.set('Authorization', 'Bearer $_gatewayToken');
       }
 
-      request.write(json.encode({
+      final body = json.encode({
         'model': 'default',
         'messages': context,
         'stream': true,
-      }));
+      });
+      request.add(utf8.encode(body));
 
       final response = await request.close().timeout(const Duration(seconds: 120));
 
