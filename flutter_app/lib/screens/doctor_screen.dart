@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_pty/flutter_pty.dart';
 import '../app.dart';
 import '../models/optional_package.dart';
 import '../services/bootstrap_service.dart';
 import '../services/native_bridge.dart';
-import '../services/package_service.dart';
 
-/// OpenClaw Doctor — system health checks with visual feedback.
-/// Like `openclaw doctor` but graphical.
+/// OpenClaw Doctor — wraps `openclaw doctor` with graphical UI.
+/// Shows parsed diagnostic results + Fix button.
 class DoctorScreen extends StatefulWidget {
   const DoctorScreen({super.key});
 
@@ -18,445 +19,460 @@ class DoctorScreen extends StatefulWidget {
 }
 
 class _DoctorScreenState extends State<DoctorScreen> {
-  final List<_Check> _checks = [];
   bool _running = false;
-  bool _done = false;
+  bool _fixing = false;
+  String _rawOutput = '';
+  List<_DiagSection> _sections = [];
+  bool _hasFixableIssues = false;
+  String? _error;
+
+  // System checks (pre-doctor)
+  final List<_SystemCheck> _systemChecks = [];
 
   @override
   void initState() {
     super.initState();
-    _runAllChecks();
+    _runDoctor();
   }
 
-  Future<void> _runAllChecks() async {
+  Future<void> _runDoctor() async {
     setState(() {
       _running = true;
-      _done = false;
-      _checks.clear();
+      _error = null;
+      _rawOutput = '';
+      _sections = [];
+      _systemChecks.clear();
+      _hasFixableIssues = false;
     });
 
+    // Phase 1: Quick system checks
+    await _runSystemChecks();
+
+    // Phase 2: Run openclaw doctor
+    try {
+      final filesDir = await NativeBridge.getFilesDir();
+      final nativeLibDir = await NativeBridge.getNativeLibDir();
+      final glibcDir = '$filesDir/glibc/lib';
+      final ldSo = '$nativeLibDir/libopenclaw-ld.so';
+      final nodeBin = '$filesDir/node/bin/node';
+      final openclawBin = '$filesDir/node/bin/openclaw';
+      final compatJs = '$filesDir/patches/glibc-compat.js';
+
+      final result = await Process.run(
+        ldSo,
+        [
+          '--library-path', glibcDir,
+          nodeBin,
+          '--require', compatJs,
+          openclawBin,
+          'doctor',
+          '--non-interactive',
+        ],
+        environment: {
+          'HOME': filesDir,
+          'PATH': '$filesDir/node/bin:/system/bin',
+          'NODE_PATH': '$filesDir/node/lib/node_modules',
+          'LD_LIBRARY_PATH': glibcDir,
+          'UV_USE_IO_URING': '0',
+          'CHOKIDAR_USEPOLLING': 'true',
+          'TERM': 'dumb',
+          'NO_COLOR': '1',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(seconds: 30));
+
+      _rawOutput = result.stdout.toString() + result.stderr.toString();
+      _sections = _parseOutput(_rawOutput);
+      _hasFixableIssues = _rawOutput.contains('--fix');
+    } catch (e) {
+      _error = 'Failed to run doctor: $e';
+    }
+
+    setState(() => _running = false);
+  }
+
+  Future<void> _runFix() async {
+    setState(() => _fixing = true);
+
+    try {
+      final filesDir = await NativeBridge.getFilesDir();
+      final nativeLibDir = await NativeBridge.getNativeLibDir();
+      final glibcDir = '$filesDir/glibc/lib';
+      final ldSo = '$nativeLibDir/libopenclaw-ld.so';
+      final nodeBin = '$filesDir/node/bin/node';
+      final openclawBin = '$filesDir/node/bin/openclaw';
+      final compatJs = '$filesDir/patches/glibc-compat.js';
+
+      final result = await Process.run(
+        ldSo,
+        [
+          '--library-path', glibcDir,
+          nodeBin,
+          '--require', compatJs,
+          openclawBin,
+          'doctor',
+          '--fix',
+          '--non-interactive',
+        ],
+        environment: {
+          'HOME': filesDir,
+          'PATH': '$filesDir/node/bin:/system/bin',
+          'NODE_PATH': '$filesDir/node/lib/node_modules',
+          'LD_LIBRARY_PATH': glibcDir,
+          'UV_USE_IO_URING': '0',
+          'CHOKIDAR_USEPOLLING': 'true',
+          'TERM': 'dumb',
+          'NO_COLOR': '1',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(seconds: 30));
+
+      _rawOutput = result.stdout.toString() + result.stderr.toString();
+      _sections = _parseOutput(_rawOutput);
+      _hasFixableIssues = false; // Assume fixed
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Doctor fix applied ✓')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fix failed: $e')),
+        );
+      }
+    }
+
+    setState(() => _fixing = false);
+  }
+
+  Future<void> _runSystemChecks() async {
     final filesDir = await NativeBridge.getFilesDir();
     final nativeLibDir = await NativeBridge.getNativeLibDir();
 
-    // 1. glibc runtime
-    await _check(
-      'glibc Runtime',
-      'ld-linux loader available',
-      () async {
-        final ldSo = '$nativeLibDir/libopenclaw-ld.so';
-        return File(ldSo).existsSync();
-      },
-    );
+    _addCheck('glibc Runtime', File('$nativeLibDir/libopenclaw-ld.so').existsSync());
+    _addCheck('Node.js', File('$filesDir/node/bin/node').existsSync());
+    _addCheck('OpenClaw CLI', File('$filesDir/node/bin/openclaw').existsSync() ||
+        File('$filesDir/node/lib/node_modules/openclaw/bin/openclaw.js').existsSync());
 
-    // 2. Node.js
-    await _check(
-      'Node.js',
-      'Node binary installed',
-      () async {
-        final nodeBin = '$filesDir/node/bin/node';
-        return File(nodeBin).existsSync();
-      },
-    );
-
-    // 3. npm / OpenClaw modules
-    await _check(
-      'npm Modules',
-      'node_modules installed',
-      () async {
-        final modulesDir = Directory('$filesDir/node/lib/node_modules');
-        if (!modulesDir.existsSync()) return false;
-        final count = modulesDir.listSync().length;
-        _checks.last.detail = '$count packages';
-        return count > 0;
-      },
-    );
-
-    // 4. OpenClaw CLI
-    await _check(
-      'OpenClaw CLI',
-      'openclaw binary found',
-      () async {
-        final oc = '$filesDir/node/bin/openclaw';
-        if (File(oc).existsSync()) return true;
-        // Also check node_modules
-        final ocModule = '$filesDir/node/lib/node_modules/openclaw/bin/openclaw.js';
-        return File(ocModule).existsSync();
-      },
-    );
-
-    // 5. Config file
-    await _check(
-      'Configuration',
-      'openclaw.json exists and is valid JSON',
-      () async {
-        final configPath = '$filesDir/.openclaw/openclaw.json';
-        final file = File(configPath);
-        if (!file.existsSync()) {
-          _checks.last.detail = 'File not found';
-          return false;
-        }
-        try {
-          final raw = file.readAsStringSync();
-          final config = json.decode(raw) as Map<String, dynamic>;
-          final keys = config.keys.toList();
-          _checks.last.detail = '${keys.length} top-level keys';
-          return true;
-        } catch (e) {
-          _checks.last.detail = 'Invalid JSON: $e';
-          return false;
-        }
-      },
-    );
-
-    // 6. Provider configured
-    await _check(
-      'Model Provider',
-      'At least one provider with API key',
-      () async {
-        final configPath = '$filesDir/.openclaw/openclaw.json';
-        try {
-          final config = json.decode(File(configPath).readAsStringSync()) as Map<String, dynamic>;
-          final providers = config['models']?['providers'] as Map?;
-          if (providers == null || providers.isEmpty) {
-            _checks.last.detail = 'No providers configured';
-            return false;
-          }
-          final names = providers.keys.toList();
-          _checks.last.detail = names.join(', ');
-          return true;
-        } catch (_) {
-          return false;
-        }
-      },
-    );
-
-    // 7. Channel configured
-    await _check(
-      'Messaging Channel',
-      'Telegram, Discord, or WhatsApp configured',
-      () async {
-        final configPath = '$filesDir/.openclaw/openclaw.json';
-        try {
-          final config = json.decode(File(configPath).readAsStringSync()) as Map<String, dynamic>;
-          final channels = config['channels'] as Map?;
-          if (channels == null) return false;
-
-          final active = <String>[];
-          for (final ch in ['telegram', 'discord', 'whatsapp']) {
-            final chConfig = channels[ch] as Map?;
-            if (chConfig != null) {
-              final hasToken = chConfig['botToken'] != null &&
-                  (chConfig['botToken'] as String).isNotEmpty;
-              if (hasToken) active.add(ch);
-            }
-          }
-          _checks.last.detail = active.isEmpty ? 'No channels with bot token' : active.join(', ');
-          return active.isNotEmpty;
-        } catch (_) {
-          return false;
-        }
-      },
-    );
-
-    // 8. Gateway health
-    await _check(
-      'Gateway',
-      'Gateway process responding',
-      () async {
-        try {
-          final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 3);
-          final request = await client.getUrl(Uri.parse('http://127.0.0.1:18789/api/health'));
-          final response = await request.close();
-          final body = await response.transform(utf8.decoder).join();
-          client.close();
-          if (response.statusCode == 200) {
-            _checks.last.detail = 'Running';
-            return true;
-          }
-          _checks.last.detail = 'HTTP ${response.statusCode}';
-          return false;
-        } catch (e) {
-          _checks.last.detail = 'Not running';
-          return false;
-        }
-      },
-    );
-
-    // 9. Workspace
-    await _check(
-      'Workspace',
-      'Agent workspace directory exists',
-      () async {
-        final wsPath = '$filesDir/.openclaw/workspace';
-        final exists = Directory(wsPath).existsSync();
-        if (exists) {
-          final files = Directory(wsPath).listSync().length;
-          _checks.last.detail = '$files items';
-        }
-        return exists;
-      },
-    );
-
-    // 10. Python (optional)
-    await _check(
-      'Python (optional)',
-      'Python 3 available for skills',
-      () async {
-        final py = '$filesDir/python/bin/python3';
-        if (!File(py).existsSync()) {
-          _checks.last.detail = 'Not installed — tap to install';
-          _checks.last.status = _CheckStatus.warning;
-          _checks.last.installPackage = OptionalPackage.pythonPackage;
-          return true;
-        }
-        _checks.last.detail = 'Installed';
-        return true;
-      },
-    );
-
-    // 11. Git (optional)
-    await _check(
-      'Git (optional)',
-      'Git available for version control',
-      () async {
-        final git = '$filesDir/git/bin/git';
-        final gitAlt = '$filesDir/git/git';
-        if (!File(git).existsSync() && !File(gitAlt).existsSync()) {
-          _checks.last.detail = 'Not installed — tap to install';
-          _checks.last.status = _CheckStatus.warning;
-          _checks.last.installPackage = OptionalPackage.gitPackage;
-          return true;
-        }
-        _checks.last.detail = 'Installed';
-        return true;
-      },
-    );
-
-    // 12. Disk space
-    await _check(
-      'Disk Space',
-      'Sufficient storage available',
-      () async {
-        try {
-          final stat = await FileStat.stat(filesDir);
-          // We can't easily get free space on Android without platform channel,
-          // but we can check if our dir is accessible
-          _checks.last.detail = 'Accessible';
-          return true;
-        } catch (_) {
-          return false;
-        }
-      },
-    );
-
-    setState(() {
-      _running = false;
-      _done = true;
-    });
-  }
-
-  Future<void> _check(String name, String description, Future<bool> Function() test) async {
-    final check = _Check(name: name, description: description);
-    setState(() => _checks.add(check));
-
-    try {
-      final ok = await test();
-      if (check.status != _CheckStatus.warning) {
-        check.status = ok ? _CheckStatus.pass : _CheckStatus.fail;
-      }
-    } catch (e) {
-      check.status = _CheckStatus.fail;
-      check.detail = e.toString();
+    final configFile = File('$filesDir/.openclaw/openclaw.json');
+    bool configValid = false;
+    if (configFile.existsSync()) {
+      try {
+        json.decode(configFile.readAsStringSync());
+        configValid = true;
+      } catch (_) {}
     }
+    _addCheck('Config file', configValid);
+
+    _addCheck('Workspace', Directory('$filesDir/.openclaw/workspace').existsSync());
+
+    // Optional
+    _addOptionalCheck('Python', File('$filesDir/python/bin/python3').existsSync(),
+        OptionalPackage.pythonPackage);
+    _addOptionalCheck('Git', File('$filesDir/git/bin/git').existsSync() ||
+        File('$filesDir/git/git').existsSync(),
+        OptionalPackage.gitPackage);
 
     setState(() {});
   }
 
+  void _addCheck(String name, bool ok) {
+    _systemChecks.add(_SystemCheck(name: name, ok: ok));
+  }
+
+  void _addOptionalCheck(String name, bool ok, OptionalPackage pkg) {
+    _systemChecks.add(_SystemCheck(name: name, ok: ok, optional: true, package: ok ? null : pkg));
+  }
+
+  Future<void> _installPackage(_SystemCheck check) async {
+    if (check.package == null) return;
+    setState(() => check.installing = true);
+
+    try {
+      final service = BootstrapService();
+      await service.installPackages(
+        packages: [check.package!],
+        onProgress: (state) {
+          setState(() => check.installStatus = state.message);
+        },
+      );
+      setState(() {
+        check.ok = true;
+        check.installing = false;
+        check.package = null;
+        check.installStatus = null;
+      });
+    } catch (e) {
+      setState(() {
+        check.installing = false;
+        check.installStatus = 'Failed: $e';
+      });
+    }
+  }
+
+  List<_DiagSection> _parseOutput(String raw) {
+    final sections = <_DiagSection>[];
+    // Strip ANSI codes
+    final clean = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[a-zA-Z]'), '');
+
+    // Parse boxed sections: ◇  Title ──...╮ ... ├──...╯
+    final sectionRegex = RegExp(r'◇\s+(.+?)\s*[─]+[╮┐]\n([\s\S]*?)(?=[├└])', multiLine: true);
+    for (final match in sectionRegex.allMatches(clean)) {
+      final title = match.group(1)?.trim() ?? 'Unknown';
+      final body = match.group(2)
+          ?.split('\n')
+          .map((l) => l.replaceAll(RegExp(r'^│\s*'), '').replaceAll(RegExp(r'\s*│$'), '').trim())
+          .where((l) => l.isNotEmpty)
+          .join('\n') ?? '';
+      if (body.isNotEmpty) {
+        final isWarning = body.contains('--fix') || body.contains('missing') || body.contains('legacy');
+        sections.add(_DiagSection(title: title, body: body, isWarning: isWarning));
+      }
+    }
+
+    // Also capture plain lines (Telegram: ok, Agents:, etc.)
+    final plainLines = <String>[];
+    for (final line in clean.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.startsWith('◇') || trimmed.startsWith('│') ||
+          trimmed.startsWith('├') || trimmed.startsWith('└') ||
+          trimmed.startsWith('┌') || trimmed.contains('──')) continue;
+      if (trimmed.contains('▄') || trimmed.contains('▀') || trimmed.contains('█')) continue;
+      if (trimmed.contains('🦞') || trimmed.contains('OPENCLAW')) continue;
+      if (trimmed.startsWith('[bridge/')) continue;
+      plainLines.add(trimmed);
+    }
+    if (plainLines.isNotEmpty) {
+      sections.add(_DiagSection(
+        title: 'Status',
+        body: plainLines.join('\n'),
+        isWarning: false,
+      ));
+    }
+
+    return sections;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final passCount = _checks.where((c) => c.status == _CheckStatus.pass).length;
-    final warnCount = _checks.where((c) => c.status == _CheckStatus.warning).length;
-    final failCount = _checks.where((c) => c.status == _CheckStatus.fail).length;
+    final theme = Theme.of(context);
+    final failCount = _systemChecks.where((c) => !c.ok && !c.optional).length;
+    final allOk = failCount == 0 && !_hasFixableIssues;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Doctor'),
         actions: [
-          if (_done)
+          if (!_running)
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _runAllChecks,
-              tooltip: 'Re-run checks',
+              onPressed: _runDoctor,
+              tooltip: 'Re-run',
             ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_done)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              color: failCount > 0
-                  ? Colors.red.withOpacity(0.1)
-                  : warnCount > 0
-                      ? Colors.amber.withOpacity(0.1)
-                      : Colors.green.withOpacity(0.1),
-              child: Row(
+      body: _running
+          ? const Center(
+              child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    failCount > 0
-                        ? Icons.error
-                        : warnCount > 0
-                            ? Icons.warning
-                            : Icons.check_circle,
-                    color: failCount > 0
-                        ? AppColors.statusRed
-                        : warnCount > 0
-                            ? AppColors.statusAmber
-                            : AppColors.statusGreen,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    failCount > 0
-                        ? '$failCount issue${failCount > 1 ? 's' : ''} found'
-                        : warnCount > 0
-                            ? 'All good — $warnCount optional'
-                            : 'All checks passed',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: failCount > 0
-                          ? AppColors.statusRed
-                          : warnCount > 0
-                              ? AppColors.statusAmber
-                              : AppColors.statusGreen,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '($passCount ✓  $warnCount ⚠  $failCount ✗)',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Running diagnostics...'),
                 ],
               ),
-            ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _checks.length + (_running ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index >= _checks.length) {
-                  return const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : ListView(
+              children: [
+                // Summary banner
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  color: _error != null
+                      ? Colors.red.withOpacity(0.1)
+                      : allOk
+                          ? Colors.green.withOpacity(0.1)
+                          : Colors.amber.withOpacity(0.1),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _error != null
+                            ? Icons.error
+                            : allOk
+                                ? Icons.check_circle
+                                : Icons.warning_amber,
+                        color: _error != null
+                            ? AppColors.statusRed
+                            : allOk
+                                ? AppColors.statusGreen
+                                : AppColors.statusAmber,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _error ?? (allOk ? 'All checks passed' : 'Issues found'),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: _error != null
+                                ? AppColors.statusRed
+                                : allOk
+                                    ? AppColors.statusGreen
+                                    : AppColors.statusAmber,
                           ),
-                          SizedBox(width: 12),
-                          Text('Running checks...'),
-                        ],
+                        ),
+                      ),
+                      if (_hasFixableIssues)
+                        ElevatedButton.icon(
+                          onPressed: _fixing ? null : _runFix,
+                          icon: _fixing
+                              ? const SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.build, size: 18),
+                          label: Text(_fixing ? 'Fixing...' : 'Fix'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.accent,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // System checks
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'SYSTEM',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                for (final check in _systemChecks) _buildSystemCheckTile(check),
+
+                // Doctor output sections
+                if (_sections.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                    child: Text(
+                      'DIAGNOSTICS',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
                       ),
                     ),
-                  );
-                }
-                return _buildCheckTile(_checks[index]);
-              },
+                  ),
+                  for (final section in _sections) _buildDiagCard(section),
+                ],
+
+                const SizedBox(height: 32),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
-  Future<void> _installPackage(_Check check) async {
-    if (check.installPackage == null) return;
-
-    setState(() {
-      check.detail = 'Installing...';
-      check.status = _CheckStatus.running;
-    });
-
-    try {
-      final service = BootstrapService();
-      await service.installPackages(
-        packages: [check.installPackage!],
-        onProgress: (state) {
-          setState(() {
-            check.detail = state.message;
-          });
-        },
-      );
-      setState(() {
-        check.status = _CheckStatus.pass;
-        check.detail = 'Installed ✓';
-        check.installPackage = null;
-      });
-    } catch (e) {
-      setState(() {
-        check.status = _CheckStatus.fail;
-        check.detail = 'Install failed: $e';
-      });
-    }
-  }
-
-  Widget _buildCheckTile(_Check check) {
-    final (icon, color) = switch (check.status) {
-      _CheckStatus.running => (Icons.hourglass_empty, Colors.grey),
-      _CheckStatus.pass => (Icons.check_circle, AppColors.statusGreen),
-      _CheckStatus.warning => (Icons.warning_amber, AppColors.statusAmber),
-      _CheckStatus.fail => (Icons.cancel, AppColors.statusRed),
-    };
-
+  Widget _buildSystemCheckTile(_SystemCheck check) {
     return ListTile(
-      leading: check.status == _CheckStatus.running
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(icon, color: color),
+      leading: check.installing
+          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+          : Icon(
+              check.ok
+                  ? Icons.check_circle
+                  : check.optional
+                      ? Icons.warning_amber
+                      : Icons.cancel,
+              color: check.ok
+                  ? AppColors.statusGreen
+                  : check.optional
+                      ? AppColors.statusAmber
+                      : AppColors.statusRed,
+            ),
       title: Text(check.name),
-      subtitle: Text(
-        check.detail ?? check.description,
-        style: TextStyle(
-          color: check.detail != null
-              ? Theme.of(context).colorScheme.onSurface
-              : Theme.of(context).colorScheme.onSurfaceVariant,
-          fontSize: 13,
-        ),
-      ),
-      trailing: check.installPackage != null && check.status == _CheckStatus.warning
+      subtitle: check.installStatus != null
+          ? Text(check.installStatus!, style: const TextStyle(fontSize: 13))
+          : Text(
+              check.ok
+                  ? 'OK'
+                  : check.optional
+                      ? 'Not installed'
+                      : 'Missing',
+              style: const TextStyle(fontSize: 13),
+            ),
+      trailing: check.package != null && !check.installing
           ? TextButton(
               onPressed: () => _installPackage(check),
               child: const Text('Install'),
             )
           : null,
-      onTap: check.installPackage != null && check.status == _CheckStatus.warning
-          ? () => _installPackage(check)
-          : null,
+    );
+  }
+
+  Widget _buildDiagCard(_DiagSection section) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  section.isWarning ? Icons.warning_amber : Icons.info_outline,
+                  size: 18,
+                  color: section.isWarning ? AppColors.statusAmber : AppColors.statusGreen,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  section.title,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              section.body,
+              style: const TextStyle(fontSize: 13, fontFamily: 'monospace', height: 1.4),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-enum _CheckStatus { running, pass, warning, fail }
-
-class _Check {
+class _SystemCheck {
   final String name;
-  final String description;
-  _CheckStatus status;
-  String? detail;
-  OptionalPackage? installPackage;
+  bool ok;
+  final bool optional;
+  OptionalPackage? package;
+  bool installing;
+  String? installStatus;
 
-  _Check({
+  _SystemCheck({
     required this.name,
-    required this.description,
-    this.status = _CheckStatus.running,
-    this.detail,
-    this.installPackage,
+    required this.ok,
+    this.optional = false,
+    this.package,
+    this.installing = false,
+    this.installStatus,
   });
+}
+
+class _DiagSection {
+  final String title;
+  final String body;
+  final bool isWarning;
+
+  _DiagSection({required this.title, required this.body, required this.isWarning});
 }
