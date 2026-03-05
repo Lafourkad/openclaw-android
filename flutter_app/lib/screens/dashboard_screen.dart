@@ -6,10 +6,9 @@ import '../providers/node_provider.dart';
 import '../widgets/gateway_controls.dart';
 import '../widgets/status_card.dart';
 import 'node_screen.dart';
-import 'configure_screen.dart';
+import 'doctor_screen.dart';
 import 'web_dashboard_screen.dart';
 import 'logs_screen.dart';
-import 'providers_screen.dart';
 import 'settings/settings_main_screen.dart';
 
 
@@ -74,21 +73,12 @@ class DashboardScreen extends StatelessWidget {
             ),
 
             StatusCard(
-              title: 'Configure',
-              subtitle: 'Manage gateway settings',
-              icon: Icons.tune,
+              title: 'Doctor',
+              subtitle: 'System health checks',
+              icon: Icons.health_and_safety,
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ConfigureScreen()),
-              ),
-            ),
-            StatusCard(
-              title: 'AI Providers',
-              subtitle: 'Configure models and API keys',
-              icon: Icons.model_training,
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ProvidersScreen()),
+                MaterialPageRoute(builder: (_) => const DoctorScreen()),
               ),
             ),
 
