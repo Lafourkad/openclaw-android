@@ -5,9 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app.dart';
 import '../services/native_bridge.dart';
+import '../services/gateway_websocket.dart';
 
-/// Telegram-quality chat with the OpenClaw agent.
-/// Multi-turn context, streaming, markdown, persistence.
+/// Full-pipeline chat with the OpenClaw agent via WebSocket.
+/// Uses the same protocol as the web Control UI dashboard.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -19,15 +20,24 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
-  bool _sending = false;
-  String? _gatewayToken;
-  String? _filesDir;
-  String _streamBuffer = '';
-  int _port = 18789;
-  bool _showScrollFab = false;
-  int? _editingIndex; // Index of message being edited
 
-  bool _endpointChecked = false;
+  GatewayWebSocket? _ws;
+  StreamSubscription? _eventSub;
+  StreamSubscription? _connSub;
+
+  bool _wsConnected = false;
+  bool _sending = false;
+  String _streamBuffer = '';
+  String? _currentRunId;
+  String? _agentName;
+  String? _filesDir;
+  int _port = 18789;
+  String? _gatewayToken;
+  String _sessionKey = 'agent:main:main';
+  bool _showScrollFab = false;
+
+  // Tool calls tracking
+  final List<String> _activeTools = [];
 
   @override
   void initState() {
@@ -47,227 +57,317 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _init() async {
     _filesDir = await NativeBridge.getFilesDir();
-    await _loadToken();
-    await _loadHistory();
-    // Don't auto-restart on init — only enable if first send fails with 404
+    await _loadConfig();
+    _connectWebSocket();
   }
 
-  Future<void> _loadToken() async {
+  Future<void> _loadConfig() async {
     try {
       final configFile = File('$_filesDir/.openclaw/openclaw.json');
       if (configFile.existsSync()) {
         final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
         _gatewayToken = config['gateway']?['auth']?['token'] as String?;
         _port = config['gateway']?['port'] as int? ?? 18789;
+
+        // Auto-generate token if missing
+        if (_gatewayToken == null || _gatewayToken!.isEmpty) {
+          _ensureToken(config, configFile);
+        }
       }
     } catch (_) {}
   }
 
-  /// Auto-enable chatCompletions + set token if missing.
-  Future<void> _ensureEndpointEnabled() async {
+  void _ensureToken(Map<String, dynamic> config, File configFile) {
+    config.putIfAbsent('gateway', () => <String, dynamic>{});
+    final gw = config['gateway'] as Map<String, dynamic>;
+    gw['auth'] = {
+      'mode': 'token',
+      'token': 'openclaw-local-${DateTime.now().millisecondsSinceEpoch}',
+    };
+    _gatewayToken = gw['auth']['token'] as String;
+    configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
+  }
+
+  void _connectWebSocket() {
+    _ws?.dispose();
+
+    _ws = GatewayWebSocket(
+      host: '127.0.0.1',
+      port: _port,
+      token: _gatewayToken,
+      sessionKey: _sessionKey,
+    );
+
+    _connSub = _ws!.connectionState.listen((connected) {
+      setState(() => _wsConnected = connected);
+    });
+
+    _eventSub = _ws!.events.listen(_onGatewayEvent);
+
+    _ws!.connect();
+  }
+
+  void _onGatewayEvent(GatewayEvent event) {
+    switch (event.event) {
+      case 'hello':
+        // Connected — load history + agent identity
+        _loadChatHistory();
+        _loadAgentIdentity();
+        break;
+
+      case 'chat':
+        _handleChatEvent(event.payload);
+        break;
+
+      case 'agent':
+        _handleAgentEvent(event.payload);
+        break;
+    }
+  }
+
+  Future<void> _loadChatHistory() async {
     try {
-      final configFile = File('$_filesDir/.openclaw/openclaw.json');
-      if (!configFile.existsSync()) return;
-
-      final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
-      bool changed = false;
-
-      // Ensure gateway.http.endpoints.chatCompletions.enabled
-      config.putIfAbsent('gateway', () => <String, dynamic>{});
-      final gw = config['gateway'] as Map<String, dynamic>;
-      gw.putIfAbsent('http', () => <String, dynamic>{});
-      final http = gw['http'] as Map<String, dynamic>;
-      http.putIfAbsent('endpoints', () => <String, dynamic>{});
-      final endpoints = http['endpoints'] as Map<String, dynamic>;
-
-      if (endpoints['chatCompletions']?['enabled'] != true) {
-        endpoints['chatCompletions'] = {'enabled': true};
-        changed = true;
-      }
-
-      // Ensure gateway auth token
-      if (gw['auth']?['token'] == null) {
-        gw['auth'] = {'mode': 'token', 'token': 'openclaw-local-${DateTime.now().millisecondsSinceEpoch}'};
-        _gatewayToken = gw['auth']['token'] as String;
-        changed = true;
-      }
-
-      if (changed) {
-        configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
-        // Restart gateway to pick up changes
-        try { await NativeBridge.restartGateway(); } catch (_) {}
-        // Wait for restart
-        await Future.delayed(const Duration(seconds: 3));
-        await _loadToken();
-      }
+      final messages = await _ws!.chatHistory(limit: 200);
+      setState(() {
+        _messages.clear();
+        for (final m in messages) {
+          if (m is! Map) continue;
+          final msg = _parseGatewayMessage(m as Map<String, dynamic>);
+          if (msg != null) _messages.add(msg);
+        }
+      });
+      _scrollToBottom();
     } catch (_) {}
   }
 
-  /// Load persisted chat history.
-  Future<void> _loadHistory() async {
+  Future<void> _loadAgentIdentity() async {
     try {
-      final histFile = File('$_filesDir/.openclaw/chat_history.json');
-      if (histFile.existsSync()) {
-        final list = json.decode(histFile.readAsStringSync()) as List;
+      final identity = await _ws!.agentIdentity();
+      if (identity != null && mounted) {
         setState(() {
-          _messages.clear();
-          for (final m in list) {
-            _messages.add(_ChatMessage.fromJson(m as Map<String, dynamic>));
+          _agentName = identity['name'] as String? ?? 'OpenClaw';
+        });
+      }
+    } catch (_) {}
+  }
+
+  /// Parse a gateway message into our display format.
+  _ChatMessage? _parseGatewayMessage(Map<String, dynamic> msg) {
+    final role = (msg['role'] as String? ?? '').toLowerCase();
+    if (role != 'user' && role != 'assistant') return null;
+
+    // Extract text from content array or text field
+    String text = '';
+    final content = msg['content'];
+    if (content is String) {
+      text = content;
+    } else if (content is List) {
+      final textParts = <String>[];
+      for (final part in content) {
+        if (part is Map) {
+          if (part['type'] == 'text' && part['text'] is String) {
+            textParts.add(part['text'] as String);
+          } else if (part['type'] == 'tool_use') {
+            textParts.add('🔧 ${part['name'] ?? 'tool'}');
+          } else if (part['type'] == 'tool_result') {
+            // Skip tool results in display
+          }
+        }
+      }
+      text = textParts.join('\n');
+    }
+
+    // Skip NO_REPLY messages
+    if (text.trim() == 'NO_REPLY') return null;
+    if (text.isEmpty) return null;
+
+    final ts = msg['timestamp'];
+    DateTime? time;
+    if (ts is int) {
+      time = DateTime.fromMillisecondsSinceEpoch(ts);
+    } else if (ts is String) {
+      time = DateTime.tryParse(ts);
+    }
+
+    return _ChatMessage(
+      text: text,
+      isUser: role == 'user',
+      time: time ?? DateTime.now(),
+    );
+  }
+
+  void _handleChatEvent(dynamic payload) {
+    if (payload is! Map) return;
+    final p = payload as Map<String, dynamic>;
+
+    // Only handle events for our session
+    if (p['sessionKey'] != _sessionKey) return;
+
+    final state = p['state'] as String?;
+
+    switch (state) {
+      case 'delta':
+        _handleDelta(p);
+        break;
+      case 'final':
+        _handleFinal(p);
+        break;
+      case 'aborted':
+        _handleAborted(p);
+        break;
+      case 'error':
+        _handleError(p);
+        break;
+    }
+  }
+
+  void _handleDelta(Map<String, dynamic> p) {
+    final msg = p['message'];
+    if (msg == null) return;
+
+    String? text;
+    if (msg is Map) {
+      final content = msg['content'];
+      if (content is String) {
+        text = content;
+      } else if (content is List) {
+        final parts = content.whereType<Map>()
+            .where((c) => c['type'] == 'text')
+            .map((c) => c['text'] as String? ?? '')
+            .join();
+        text = parts;
+      }
+      // Also try 'text' field
+      text ??= msg['text'] as String?;
+    }
+
+    if (text != null && text.isNotEmpty && text.trim() != 'NO_REPLY') {
+      if (text.length >= _streamBuffer.length) {
+        _streamBuffer = text;
+        setState(() {
+          // Update the last assistant message (streaming placeholder)
+          if (_messages.isNotEmpty && !_messages.last.isUser) {
+            _messages.last.text = _streamBuffer;
           }
         });
         _scrollToBottom();
       }
-    } catch (_) {}
+    }
   }
 
-  /// Persist chat history.
-  Future<void> _saveHistory() async {
-    try {
-      final histFile = File('$_filesDir/.openclaw/chat_history.json');
-      // Keep last 200 messages
-      final toSave = _messages.length > 200 ? _messages.sublist(_messages.length - 200) : _messages;
-      histFile.writeAsStringSync(json.encode(toSave.map((m) => m.toJson()).toList()));
-    } catch (_) {}
+  void _handleFinal(Map<String, dynamic> p) {
+    final msg = p['message'];
+    final parsed = msg is Map<String, dynamic> ? _parseGatewayMessage(msg) : null;
+
+    setState(() {
+      // Remove streaming placeholder
+      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
+        _messages.removeLast();
+      }
+
+      if (parsed != null) {
+        _messages.add(parsed);
+      } else if (_streamBuffer.trim().isNotEmpty && _streamBuffer.trim() != 'NO_REPLY') {
+        _messages.add(_ChatMessage(
+          text: _streamBuffer,
+          isUser: false,
+          time: DateTime.now(),
+        ));
+      }
+
+      _sending = false;
+      _currentRunId = null;
+      _streamBuffer = '';
+      _activeTools.clear();
+    });
+    _scrollToBottom();
   }
 
-  /// Build conversation context for multi-turn.
-  List<Map<String, String>> _buildContext() {
-    // Send last 20 messages as context
-    final recent = _messages.length > 20 ? _messages.sublist(_messages.length - 20) : _messages;
-    return recent
-        .where((m) => !m.isError)
-        .map((m) => {
-              'role': m.isUser ? 'user' : 'assistant',
-              'content': m.text,
-            })
-        .toList();
+  void _handleAborted(Map<String, dynamic> p) {
+    setState(() {
+      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
+        if (_streamBuffer.trim().isNotEmpty) {
+          _messages.last.text = _streamBuffer + '\n\n⚠️ (aborted)';
+        } else {
+          _messages.removeLast();
+        }
+      }
+      _sending = false;
+      _currentRunId = null;
+      _streamBuffer = '';
+      _activeTools.clear();
+    });
+  }
+
+  void _handleError(Map<String, dynamic> p) {
+    final errorMsg = p['errorMessage'] as String? ?? 'Unknown error';
+    setState(() {
+      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
+        _messages.last.text = '❌ $errorMsg';
+        _messages.last.isError = true;
+      }
+      _sending = false;
+      _currentRunId = null;
+      _streamBuffer = '';
+      _activeTools.clear();
+    });
+  }
+
+  void _handleAgentEvent(dynamic payload) {
+    if (payload is! Map) return;
+    // Track tool usage for display
+    final toolName = payload['tool'] as String?;
+    final status = payload['status'] as String?;
+
+    if (toolName != null) {
+      setState(() {
+        if (status == 'started') {
+          _activeTools.add(toolName);
+        } else {
+          _activeTools.remove(toolName);
+        }
+      });
+    }
   }
 
   Future<void> _send() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || _sending || !_wsConnected) return;
 
     _inputController.clear();
-    final userMsg = _ChatMessage(text: text, isUser: true, time: DateTime.now());
+
     setState(() {
-      _messages.add(userMsg);
+      _messages.add(_ChatMessage(text: text, isUser: true, time: DateTime.now()));
       _sending = true;
       _streamBuffer = '';
+      // Add streaming placeholder
+      _messages.add(_ChatMessage(text: '', isUser: false, time: DateTime.now()));
     });
     _scrollToBottom();
-
-    // Add placeholder for streaming response
-    final assistantMsg = _ChatMessage(text: '', isUser: false, time: DateTime.now());
-    setState(() => _messages.add(assistantMsg));
 
     try {
-      final context = _buildContext();
-      // Remove the empty assistant placeholder from context
-      if (context.isNotEmpty && context.last['content']?.isEmpty == true) {
-        context.removeLast();
-      }
-
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 5);
-
-      final request = await client.postUrl(
-        Uri.parse('http://127.0.0.1:$_port/v1/chat/completions'),
-      );
-
-      request.headers.set('Content-Type', 'application/json');
-      if (_gatewayToken != null) {
-        request.headers.set('Authorization', 'Bearer $_gatewayToken');
-      }
-
-      final body = json.encode({
-        'model': 'default',
-        'messages': context,
-        'stream': true,
-      });
-      request.add(utf8.encode(body));
-
-      final response = await request.close().timeout(const Duration(seconds: 120));
-
-      if (response.statusCode == 200) {
-        // Stream SSE responses
-        await for (final chunk in response.transform(utf8.decoder)) {
-          for (final line in chunk.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') break;
-
-            try {
-              final obj = json.decode(data) as Map<String, dynamic>;
-              final delta = obj['choices']?[0]?['delta']?['content'] as String?;
-              if (delta != null) {
-                _streamBuffer += delta;
-                setState(() => assistantMsg.text = _streamBuffer);
-                _scrollToBottom();
-              }
-            } catch (_) {}
-          }
-        }
-
-        // If stream was empty, try non-streaming fallback
-        if (_streamBuffer.isEmpty) {
-          setState(() => assistantMsg.text = '(Empty response)');
-        }
-
-        client.close();
-      } else if (response.statusCode == 404 && !_endpointChecked) {
-        final body = await response.transform(utf8.decoder).join();
-        client.close();
-        _endpointChecked = true;
-        setState(() {
-          assistantMsg.text = 'Chat API not enabled. Enabling and restarting gateway...\n'
-              'Try again in ~5 seconds.';
-          assistantMsg.isError = true;
-        });
-        await _ensureEndpointEnabled();
-      } else if (response.statusCode == 404) {
-        final body = await response.transform(utf8.decoder).join();
-        client.close();
-        setState(() {
-          assistantMsg.text = 'Chat API endpoint not found (404).\n'
-              'Check Settings → Gateway → HTTP API → Chat Completions.';
-          assistantMsg.isError = true;
-        });
-      } else {
-        final body = await response.transform(utf8.decoder).join();
-        client.close();
-        setState(() {
-          assistantMsg.text = 'Error ${response.statusCode}: $body';
-          assistantMsg.isError = true;
-        });
-      }
+      _currentRunId = await _ws!.chatSend(text);
     } catch (e) {
       setState(() {
-        assistantMsg.text = 'Connection failed: $e\n\nPort: $_port | Token: ${_gatewayToken != null ? "set" : "missing"}';
-        assistantMsg.isError = true;
+        if (_messages.isNotEmpty && !_messages.last.isUser) {
+          _messages.last.text = '❌ $e';
+          _messages.last.isError = true;
+        }
+        _sending = false;
       });
     }
-
-    setState(() => _sending = false);
-    _saveHistory();
-    _scrollToBottom();
   }
 
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 50), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  Future<void> _abort() async {
+    if (!_sending) return;
+    try {
+      await _ws!.chatAbort(_currentRunId);
+    } catch (_) {}
   }
 
-  /// Regenerate last assistant response.
   Future<void> _regenerate() async {
     if (_sending) return;
-    // Find last assistant message and remove it
+    // Remove last assistant message
     for (int i = _messages.length - 1; i >= 0; i--) {
       if (!_messages[i].isUser) {
         setState(() => _messages.removeAt(i));
@@ -286,16 +386,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Edit a user message and resend (removes all messages after it).
   void _editMessage(int index) {
     if (index >= _messages.length || !_messages[index].isUser) return;
     final text = _messages[index].text;
-    // Remove this message and everything after
-    setState(() {
-      _messages.removeRange(index, _messages.length);
-    });
+    setState(() => _messages.removeRange(index, _messages.length));
     _inputController.text = text;
-    _saveHistory();
   }
 
   void _clearChat() async {
@@ -303,6 +398,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Clear chat?'),
+        content: const Text('This clears local display only. Server history remains.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
@@ -311,9 +407,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (confirm == true) {
       setState(() => _messages.clear());
-      _saveHistory();
     }
   }
+
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  // --- Date / grouping helpers ---
+
+  bool _needsDateSeparator(int index) {
+    if (index == 0) return true;
+    final prev = _messages[index - 1].time;
+    final curr = _messages[index].time;
+    if (prev == null || curr == null) return false;
+    return prev.day != curr.day || prev.month != curr.month || prev.year != curr.year;
+  }
+
+  bool _isGrouped(int index) {
+    if (index == 0) return false;
+    final prev = _messages[index - 1];
+    final curr = _messages[index];
+    if (prev.isUser != curr.isUser) return false;
+    if (prev.time == null || curr.time == null) return false;
+    return curr.time!.difference(prev.time!).inSeconds < 60;
+  }
+
+  // --- Build ---
 
   @override
   Widget build(BuildContext context) {
@@ -336,11 +464,11 @@ class _ChatScreenState extends State<ChatScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('OpenClaw', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 Text(
-                  _sending ? 'typing...' : 'online',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                  _agentName ?? 'OpenClaw',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                 ),
+                _buildSubtitle(isDark),
               ],
             ),
           ],
@@ -351,6 +479,30 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          // Connection banner
+          if (!_wsConnected)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.orange.shade800,
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Connecting to gateway...', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  ),
+                  TextButton(
+                    onPressed: _connectWebSocket,
+                    child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            ),
+
           // Messages
           Expanded(
             child: Stack(
@@ -363,9 +515,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: isDark ? Colors.white10 : Colors.black12,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Text(
-                            'Start a conversation',
-                            style: TextStyle(fontSize: 13),
+                          child: Text(
+                            _wsConnected ? 'Start a conversation' : 'Waiting for connection...',
+                            style: const TextStyle(fontSize: 13),
                           ),
                         ),
                       )
@@ -375,18 +527,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemCount: _messages.length,
                         itemBuilder: (context, index) {
                           final widgets = <Widget>[];
-
-                          // Date separator
                           if (index == 0 || _needsDateSeparator(index)) {
                             widgets.add(_buildDateSeparator(_messages[index].time));
                           }
-
                           widgets.add(_buildMessage(_messages[index], index));
                           return Column(children: widgets);
                         },
                       ),
 
-                // Scroll-to-bottom FAB
+                // Scroll FAB
                 if (_showScrollFab)
                   Positioned(
                     right: 16,
@@ -400,6 +549,33 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
+
+          // Tool calls banner
+          if (_activeTools.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              color: isDark ? const Color(0xFF1A2736) : const Color(0xFFF5F0E8),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 12, height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '🔧 Using ${_activeTools.last}...',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.white60 : Colors.black54,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // Input bar
           Container(
@@ -441,24 +617,28 @@ class _ChatScreenState extends State<ChatScreen> {
                         maxLines: 6,
                         minLines: 1,
                         textCapitalization: TextCapitalization.sentences,
+                        enabled: _wsConnected,
                       ),
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // Send button
+                  // Send / Stop button
                   Container(
                     width: 42, height: 42,
                     decoration: BoxDecoration(
-                      color: _sending ? Colors.grey : AppColors.accent,
+                      color: _sending
+                          ? Colors.red.shade700
+                          : (!_wsConnected ? Colors.grey : AppColors.accent),
                       shape: BoxShape.circle,
                     ),
                     child: _sending
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        ? IconButton(
+                            onPressed: _abort,
+                            icon: const Icon(Icons.stop, color: Colors.white, size: 20),
+                            padding: EdgeInsets.zero,
                           )
                         : IconButton(
-                            onPressed: _send,
+                            onPressed: _wsConnected ? _send : null,
                             icon: const Icon(Icons.send, color: Colors.white, size: 18),
                             padding: EdgeInsets.zero,
                           ),
@@ -472,6 +652,29 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildSubtitle(bool isDark) {
+    if (_sending && _activeTools.isNotEmpty) {
+      return Text(
+        'using ${_activeTools.last}...',
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+      );
+    }
+    if (_sending) {
+      return const Text(
+        'typing...',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+      );
+    }
+    return Text(
+      _wsConnected ? 'online' : 'connecting...',
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w400,
+        color: _wsConnected ? Colors.greenAccent : Colors.white60,
+      ),
+    );
+  }
+
   Widget _buildMessage(_ChatMessage msg, int index) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -481,7 +684,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ? '${msg.time!.hour.toString().padLeft(2, '0')}:${msg.time!.minute.toString().padLeft(2, '0')}'
         : '';
 
-    // Telegram-style colors
     final bubbleColor = isUser
         ? (isDark ? const Color(0xFF2B5278) : const Color(0xFFEFFFDE))
         : msg.isError
@@ -524,14 +726,8 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Streaming indicator
               if (!isUser && msg.text.isEmpty && _sending)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _TypingDots(),
-                  ],
-                )
+                _TypingDots()
               else
                 _buildFormattedText(msg.text, textColor),
               if (time.isNotEmpty) ...[
@@ -554,26 +750,20 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Render text with basic markdown: **bold**, `code`, ```code blocks```
   Widget _buildFormattedText(String text, Color defaultColor) {
-    // Check for code blocks
     if (text.contains('```')) {
       final parts = <Widget>[];
       final segments = text.split('```');
 
       for (int i = 0; i < segments.length; i++) {
         if (i % 2 == 0) {
-          // Normal text
-          if (segments[i].isNotEmpty) {
-            parts.add(SelectableText(
-              segments[i].trim(),
-              style: TextStyle(fontSize: 14, color: defaultColor, height: 1.4),
+          if (segments[i].trim().isNotEmpty) {
+            parts.add(SelectableText.rich(
+              _parseInlineMarkdown(segments[i].trim(), defaultColor),
             ));
           }
         } else {
-          // Code block
           var code = segments[i];
-          // Remove language hint on first line
           if (code.startsWith('\n')) code = code.substring(1);
           final firstNewline = code.indexOf('\n');
           if (firstNewline > 0 && firstNewline < 20 && !code.substring(0, firstNewline).contains(' ')) {
@@ -588,14 +778,30 @@ class _ChatScreenState extends State<ChatScreen> {
               color: Colors.black.withOpacity(0.15),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: SelectableText(
-              code.trim(),
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: defaultColor,
-                height: 1.4,
-              ),
+            child: Stack(
+              children: [
+                SelectableText(
+                  code.trim(),
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: defaultColor,
+                    height: 1.4,
+                  ),
+                ),
+                Positioned(
+                  top: 0, right: 0,
+                  child: GestureDetector(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: code.trim()));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Code copied'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                    child: Icon(Icons.copy, size: 14, color: defaultColor.withOpacity(0.5)),
+                  ),
+                ),
+              ],
             ),
           ));
         }
@@ -608,67 +814,35 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    // Inline formatting: **bold**, *italic*, `code`
-    return SelectableText.rich(
-      _parseInlineMarkdown(text, defaultColor),
-    );
+    return SelectableText.rich(_parseInlineMarkdown(text, defaultColor));
   }
 
   TextSpan _parseInlineMarkdown(String text, Color defaultColor) {
     final spans = <InlineSpan>[];
     final baseStyle = TextStyle(fontSize: 14, color: defaultColor, height: 1.4);
-
-    // Pattern: **bold**, *italic*, `code`
     final regex = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`');
 
     int lastEnd = 0;
     for (final match in regex.allMatches(text)) {
-      // Text before match
       if (match.start > lastEnd) {
         spans.add(TextSpan(text: text.substring(lastEnd, match.start), style: baseStyle));
       }
-
       if (match.group(1) != null) {
-        // **bold**
-        spans.add(TextSpan(
-          text: match.group(1),
-          style: baseStyle.copyWith(fontWeight: FontWeight.bold),
-        ));
+        spans.add(TextSpan(text: match.group(1), style: baseStyle.copyWith(fontWeight: FontWeight.bold)));
       } else if (match.group(2) != null) {
-        // *italic*
-        spans.add(TextSpan(
-          text: match.group(2),
-          style: baseStyle.copyWith(fontStyle: FontStyle.italic),
-        ));
+        spans.add(TextSpan(text: match.group(2), style: baseStyle.copyWith(fontStyle: FontStyle.italic)));
       } else if (match.group(3) != null) {
-        // `code`
         spans.add(TextSpan(
           text: match.group(3),
-          style: baseStyle.copyWith(
-            fontFamily: 'monospace',
-            fontSize: 13,
-            backgroundColor: defaultColor.withOpacity(0.1),
-          ),
+          style: baseStyle.copyWith(fontFamily: 'monospace', fontSize: 13, backgroundColor: defaultColor.withOpacity(0.1)),
         ));
       }
-
       lastEnd = match.end;
     }
-
-    // Remaining text
     if (lastEnd < text.length) {
       spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
     }
-
     return TextSpan(children: spans.isEmpty ? [TextSpan(text: text, style: baseStyle)] : spans);
-  }
-
-  bool _needsDateSeparator(int index) {
-    if (index == 0) return true;
-    final prev = _messages[index - 1].time;
-    final curr = _messages[index].time;
-    if (prev == null || curr == null) return false;
-    return prev.day != curr.day || prev.month != curr.month || prev.year != curr.year;
   }
 
   Widget _buildDateSeparator(DateTime? time) {
@@ -680,43 +854,21 @@ class _ChatScreenState extends State<ChatScreen> {
       final today = DateTime(now.year, now.month, now.day);
       final msgDate = DateTime(time.year, time.month, time.day);
       final diff = today.difference(msgDate).inDays;
-
-      if (diff == 0) {
-        label = 'Today';
-      } else if (diff == 1) {
-        label = 'Yesterday';
-      } else {
-        label = '${time.day}/${time.month}/${time.year}';
-      }
+      label = diff == 0 ? 'Today' : diff == 1 ? 'Yesterday' : '${time.day}/${time.month}/${time.year}';
     }
-
     return Center(
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 12),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.black26,
-          borderRadius: BorderRadius.circular(10),
-        ),
+        decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)),
         child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.white70)),
       ),
     );
   }
 
-  /// Check if this message should be grouped (hide time if same sender within 1 min).
-  bool _isGrouped(int index) {
-    if (index == 0) return false;
-    final prev = _messages[index - 1];
-    final curr = _messages[index];
-    if (prev.isUser != curr.isUser) return false;
-    if (prev.time == null || curr.time == null) return false;
-    return curr.time!.difference(prev.time!).inSeconds < 60;
-  }
-
   void _showMessageMenu(_ChatMessage msg) {
     final index = _messages.indexOf(msg);
-    final isLastAssistant = !msg.isUser &&
-        index == _messages.length - 1;
+    final isLastAssistant = !msg.isUser && index == _messages.length - 1;
 
     showModalBottomSheet(
       context: context,
@@ -739,26 +891,19 @@ class _ChatScreenState extends State<ChatScreen> {
               ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('Edit & resend'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _editMessage(index);
-                },
+                onTap: () { Navigator.pop(ctx); _editMessage(index); },
               ),
             if (isLastAssistant)
               ListTile(
                 leading: const Icon(Icons.refresh),
                 title: const Text('Regenerate'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _regenerate();
-                },
+                onTap: () { Navigator.pop(ctx); _regenerate(); },
               ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text('Delete', style: TextStyle(color: Colors.red)),
               onTap: () {
                 setState(() => _messages.remove(msg));
-                _saveHistory();
                 Navigator.pop(ctx);
               },
             ),
@@ -773,6 +918,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
+    _eventSub?.cancel();
+    _connSub?.cancel();
+    _ws?.dispose();
     super.dispose();
   }
 }
@@ -789,23 +937,9 @@ class _ChatMessage {
     this.isError = false,
     this.time,
   });
-
-  Map<String, dynamic> toJson() => {
-    'text': text,
-    'isUser': isUser,
-    'isError': isError,
-    'time': time?.toIso8601String(),
-  };
-
-  factory _ChatMessage.fromJson(Map<String, dynamic> j) => _ChatMessage(
-    text: j['text'] as String? ?? '',
-    isUser: j['isUser'] as bool? ?? false,
-    isError: j['isError'] as bool? ?? false,
-    time: j['time'] != null ? DateTime.tryParse(j['time'] as String) : null,
-  );
 }
 
-/// Telegram-style typing dots animation.
+/// Typing dots animation.
 class _TypingDots extends StatefulWidget {
   @override
   State<_TypingDots> createState() => _TypingDotsState();
@@ -846,7 +980,7 @@ class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderState
                 opacity: opacity,
                 child: Container(
                   width: 7, height: 7,
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: Colors.white54,
                     shape: BoxShape.circle,
                   ),
