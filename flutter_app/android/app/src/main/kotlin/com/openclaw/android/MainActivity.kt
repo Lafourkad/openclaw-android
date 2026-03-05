@@ -385,6 +385,14 @@ class MainActivity : FlutterActivity() {
                 "isGatewayRunning" -> {
                     result.success(GatewayService.isRunning)
                 }
+                "getAutoStart" -> {
+                    result.success(BootReceiver.isAutoStartEnabled(applicationContext))
+                }
+                "setAutoStart" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    BootReceiver.setAutoStartEnabled(applicationContext, enabled)
+                    result.success(true)
+                }
                 "startTerminalService" -> {
                     try {
                         TerminalSessionService.start(applicationContext)

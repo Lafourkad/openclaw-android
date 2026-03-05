@@ -19,7 +19,9 @@ import java.io.InputStreamReader
 class GatewayService : Service() {
     companion object {
         const val CHANNEL_ID = "openclaw_gateway"
+        const val ALERT_CHANNEL_ID = "openclaw_alerts"
         const val NOTIFICATION_ID = 1
+        const val CRASH_NOTIFICATION_ID = 2
         var isRunning = false
             private set
         var logSink: EventChannel.EventSink? = null
@@ -170,6 +172,7 @@ class GatewayService : Service() {
                 } else if (restartCount >= maxRestarts) {
                     emitLog("Max restarts reached. Gateway stopped.")
                     updateNotification("Gateway stopped (crashed)")
+                    sendCrashNotification("Gateway crashed after $maxRestarts restart attempts (exit code $exitCode)")
                     isRunning = false
                 }
             } catch (e: Exception) {
@@ -399,6 +402,9 @@ class GatewayService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+
+            // Foreground service channel (silent)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "OpenClaw Gateway",
@@ -406,9 +412,45 @@ class GatewayService : Service() {
             ).apply {
                 description = "Keeps the OpenClaw gateway running in the background"
             }
-            val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
+
+            // Alert channel (for crashes, errors — shows heads-up)
+            val alertChannel = NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "Gateway Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Crash notifications and important gateway events"
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(alertChannel)
         }
+    }
+
+    private fun sendCrashNotification(message: String) {
+        try {
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 1, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, ALERT_CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }
+
+            builder.setContentTitle("⚠️ Gateway Crashed")
+                .setContentText(message)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(CRASH_NOTIFICATION_ID, builder.build())
+        } catch (_: Exception) {}
     }
 
     private fun buildNotification(text: String): Notification {

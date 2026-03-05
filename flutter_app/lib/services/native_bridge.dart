@@ -141,6 +141,14 @@ class NativeBridge {
     return await _channel.invokeMethod('stopGateway');
   }
 
+  static Future<bool> getAutoStart() async {
+    return await _channel.invokeMethod('getAutoStart') ?? false;
+  }
+
+  static Future<void> setAutoStart(bool enabled) async {
+    await _channel.invokeMethod('setAutoStart', {'enabled': enabled});
+  }
+
   static Future<bool> restartGateway() async {
     await stopGateway();
     await Future.delayed(const Duration(seconds: 1));

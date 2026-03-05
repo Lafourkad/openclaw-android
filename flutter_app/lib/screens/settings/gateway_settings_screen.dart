@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/config_service.dart';
+import '../../services/native_bridge.dart';
 import '../../widgets/config_widgets.dart';
 
 class GatewaySettingsScreen extends StatefulWidget {
@@ -12,11 +13,18 @@ class GatewaySettingsScreen extends StatefulWidget {
 
 class _GatewaySettingsScreenState extends State<GatewaySettingsScreen> {
   late ConfigService _config;
+  bool _autoStart = false;
 
   @override
   void initState() {
     super.initState();
     _config = context.read<ConfigService>();
+    _loadAutoStart();
+  }
+
+  Future<void> _loadAutoStart() async {
+    final enabled = await NativeBridge.getAutoStart();
+    if (mounted) setState(() => _autoStart = enabled);
   }
 
   @override
@@ -30,6 +38,17 @@ class _GatewaySettingsScreenState extends State<GatewaySettingsScreen> {
         ),
         body: ListView(
           children: [
+            const ConfigSectionHeader('Startup', icon: Icons.power_settings_new),
+            SwitchListTile(
+              title: const Text('Auto-start on boot'),
+              subtitle: const Text('Start gateway when device boots'),
+              value: _autoStart,
+              onChanged: (v) async {
+                await NativeBridge.setAutoStart(v);
+                setState(() => _autoStart = v);
+              },
+            ),
+
             const ConfigSectionHeader('Network', icon: Icons.dns),
             ConfigNumberField(
               config: _config,
