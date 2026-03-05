@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart'; // Used by Clipboard
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:xterm/xterm.dart';
 import '../app.dart';
@@ -34,27 +34,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
     super.initState();
     _terminal = Terminal(maxLines: 10000);
     _terminalController = TerminalController();
-    HardwareKeyboard.instance.addHandler(_onHardwareKey);
     _startShell();
-  }
-
-  bool _onHardwareKey(KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
-    final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.backspace) {
-      _pty?.write(Uint8List.fromList([0x7f]));
-      return true; // consumed
-    }
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
-      _pty?.write(const Utf8Encoder().convert('\r'));
-      return true;
-    }
-    return false;
   }
 
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     _pty?.kill();
     _terminalController.dispose();
     _ctrlNotifier.dispose();
@@ -279,50 +263,35 @@ class _TerminalScreenState extends State<TerminalScreen> {
           }
         }
       },
-      child: KeyboardListener(
-        focusNode: FocusNode(skipTraversal: true),
-        onKeyEvent: (event) {
-          if (event is KeyDownEvent || event is KeyRepeatEvent) {
-            final key = event.logicalKey;
-            if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
-              _pty?.write(const Utf8Encoder().convert('\r'));
-            } else if (key == LogicalKeyboardKey.backspace) {
-              _pty?.write(Uint8List.fromList([0x7f])); // DEL
-            } else if (key == LogicalKeyboardKey.delete) {
-              _pty?.write(const Utf8Encoder().convert('\x1b[3~'));
-            }
-          }
-        },
-        child: TerminalView(
-          _terminal,
-          controller: _terminalController,
-          autofocus: true,
-          backgroundOpacity: 0,
-          theme: const TerminalTheme(
-            cursor: Color(0xFFDC2626),
-            selection: Color(0x80DC2626),
-            foreground: Color(0xFFE0E0E0),
-            background: Color(0xFF0D0D0D),
-            black: Color(0xFF000000),
-            red: Color(0xFFDC2626),
-            green: Color(0xFF22C55E),
-            yellow: Color(0xFFF59E0B),
-            blue: Color(0xFF3B82F6),
-            magenta: Color(0xFFA855F7),
-            cyan: Color(0xFF06B6D4),
-            white: Color(0xFFE0E0E0),
-            brightBlack: Color(0xFF6B7280),
-            brightRed: Color(0xFFEF4444),
-            brightGreen: Color(0xFF4ADE80),
-            brightYellow: Color(0xFFFBBF24),
-            brightBlue: Color(0xFF60A5FA),
-            brightMagenta: Color(0xFFC084FC),
-            brightCyan: Color(0xFF22D3EE),
-            brightWhite: Color(0xFFFFFFFF),
-            searchHitBackground: Color(0x80F59E0B),
-            searchHitBackgroundCurrent: Color(0x80DC2626),
-            searchHitForeground: Color(0xFFFFFFFF),
-          ),
+      child: TerminalView(
+        _terminal,
+        controller: _terminalController,
+        autofocus: true,
+        backgroundOpacity: 0,
+        theme: const TerminalTheme(
+          cursor: Color(0xFFDC2626),
+          selection: Color(0x80DC2626),
+          foreground: Color(0xFFE0E0E0),
+          background: Color(0xFF0D0D0D),
+          black: Color(0xFF000000),
+          red: Color(0xFFDC2626),
+          green: Color(0xFF22C55E),
+          yellow: Color(0xFFF59E0B),
+          blue: Color(0xFF3B82F6),
+          magenta: Color(0xFFA855F7),
+          cyan: Color(0xFF06B6D4),
+          white: Color(0xFFE0E0E0),
+          brightBlack: Color(0xFF6B7280),
+          brightRed: Color(0xFFEF4444),
+          brightGreen: Color(0xFF4ADE80),
+          brightYellow: Color(0xFFFBBF24),
+          brightBlue: Color(0xFF60A5FA),
+          brightMagenta: Color(0xFFC084FC),
+          brightCyan: Color(0xFF22D3EE),
+          brightWhite: Color(0xFFFFFFFF),
+          searchHitBackground: Color(0x80F59E0B),
+          searchHitBackgroundCurrent: Color(0x80DC2626),
+          searchHitForeground: Color(0xFFFFFFFF),
         ),
       ),
     );
