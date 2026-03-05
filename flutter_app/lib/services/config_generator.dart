@@ -246,6 +246,7 @@ class ConfigGenerator {
       final tgConfig = <String, dynamic>{
         'enabled': true,
         'botToken': config.telegramBotToken,
+        'streaming': 'off',
       };
       if (config.telegramUserId.isNotEmpty) {
         tgConfig['dmPolicy'] = 'allowlist';
