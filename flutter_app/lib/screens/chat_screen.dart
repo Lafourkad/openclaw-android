@@ -32,9 +32,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final configFile = File('$filesDir/.openclaw/openclaw.json');
       if (configFile.existsSync()) {
         final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
-        // Try auth.token first, then gateway.auth.token
-        _gatewayToken = config['auth']?['token'] as String? ??
-            config['gateway']?['auth']?['token'] as String?;
+        // Gateway auth token — try gateway.auth.token first (correct path)
+        _gatewayToken = config['gateway']?['auth']?['token'] as String? ??
+            config['auth']?['token'] as String?;
       }
     } catch (_) {}
   }
@@ -51,6 +51,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     try {
+      // Check if chatCompletions is enabled
+      if (_gatewayToken == null) {
+        setState(() {
+          _messages.add(_ChatMessage(
+            text: 'No gateway token found in config.\n\n'
+                'Go to Settings → Gateway → Authentication and set a token, '
+                'or enable the Chat Completions API in Settings → Gateway → HTTP API.',
+            isUser: false,
+            isError: true,
+          ));
+          _sending = false;
+        });
+        return;
+      }
+
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 5);
 
