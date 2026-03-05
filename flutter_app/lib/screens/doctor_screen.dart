@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../app.dart';
+import '../models/optional_package.dart';
+import '../services/bootstrap_service.dart';
 import '../services/native_bridge.dart';
+import '../services/package_service.dart';
 
 /// OpenClaw Doctor — system health checks with visual feedback.
 /// Like `openclaw doctor` but graphical.
@@ -202,9 +205,10 @@ class _DoctorScreenState extends State<DoctorScreen> {
       () async {
         final py = '$filesDir/python/bin/python3';
         if (!File(py).existsSync()) {
-          _checks.last.detail = 'Not installed';
+          _checks.last.detail = 'Not installed — tap to install';
           _checks.last.status = _CheckStatus.warning;
-          return true; // warning, not fail
+          _checks.last.installPackage = OptionalPackage.pythonPackage;
+          return true;
         }
         _checks.last.detail = 'Installed';
         return true;
@@ -217,9 +221,11 @@ class _DoctorScreenState extends State<DoctorScreen> {
       'Git available for version control',
       () async {
         final git = '$filesDir/git/bin/git';
-        if (!File(git).existsSync()) {
-          _checks.last.detail = 'Not installed';
+        final gitAlt = '$filesDir/git/git';
+        if (!File(git).existsSync() && !File(gitAlt).existsSync()) {
+          _checks.last.detail = 'Not installed — tap to install';
           _checks.last.status = _CheckStatus.warning;
+          _checks.last.installPackage = OptionalPackage.gitPackage;
           return true;
         }
         _checks.last.detail = 'Installed';
@@ -367,6 +373,37 @@ class _DoctorScreenState extends State<DoctorScreen> {
     );
   }
 
+  Future<void> _installPackage(_Check check) async {
+    if (check.installPackage == null) return;
+
+    setState(() {
+      check.detail = 'Installing...';
+      check.status = _CheckStatus.running;
+    });
+
+    try {
+      final service = BootstrapService();
+      await service.installPackages(
+        packages: [check.installPackage!],
+        onProgress: (state) {
+          setState(() {
+            check.detail = state.message;
+          });
+        },
+      );
+      setState(() {
+        check.status = _CheckStatus.pass;
+        check.detail = 'Installed ✓';
+        check.installPackage = null;
+      });
+    } catch (e) {
+      setState(() {
+        check.status = _CheckStatus.fail;
+        check.detail = 'Install failed: $e';
+      });
+    }
+  }
+
   Widget _buildCheckTile(_Check check) {
     final (icon, color) = switch (check.status) {
       _CheckStatus.running => (Icons.hourglass_empty, Colors.grey),
@@ -393,6 +430,15 @@ class _DoctorScreenState extends State<DoctorScreen> {
           fontSize: 13,
         ),
       ),
+      trailing: check.installPackage != null && check.status == _CheckStatus.warning
+          ? TextButton(
+              onPressed: () => _installPackage(check),
+              child: const Text('Install'),
+            )
+          : null,
+      onTap: check.installPackage != null && check.status == _CheckStatus.warning
+          ? () => _installPackage(check)
+          : null,
     );
   }
 }
@@ -404,11 +450,13 @@ class _Check {
   final String description;
   _CheckStatus status;
   String? detail;
+  OptionalPackage? installPackage;
 
   _Check({
     required this.name,
     required this.description,
     this.status = _CheckStatus.running,
     this.detail,
+    this.installPackage,
   });
 }
