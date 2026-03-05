@@ -5,10 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app.dart';
 import '../services/native_bridge.dart';
-import '../services/gateway_websocket.dart';
 
-/// Full-pipeline chat with the OpenClaw agent via WebSocket.
-/// Uses the same protocol as the web Control UI dashboard.
+/// Chat with the OpenClaw agent via HTTP /v1/chat/completions (SSE streaming).
+/// Full agent pipeline — SOUL.md, tools, memory, skills all active.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -21,23 +20,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
 
-  GatewayWebSocket? _ws;
-  StreamSubscription? _eventSub;
-  StreamSubscription? _connSub;
-
-  bool _wsConnected = false;
   bool _sending = false;
   String _streamBuffer = '';
-  String? _currentRunId;
-  String? _agentName;
   String? _filesDir;
   int _port = 18789;
   String? _gatewayToken;
-  String _sessionKey = 'agent:main:main';
   bool _showScrollFab = false;
-
-  // Tool calls tracking
-  final List<String> _activeTools = [];
+  bool _endpointChecked = false;
 
   @override
   void initState() {
@@ -58,7 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _init() async {
     _filesDir = await NativeBridge.getFilesDir();
     await _loadConfig();
-    _connectWebSocket();
+    await _loadHistory();
   }
 
   Future<void> _loadConfig() async {
@@ -68,330 +57,181 @@ class _ChatScreenState extends State<ChatScreen> {
         final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
         _gatewayToken = config['gateway']?['auth']?['token'] as String?;
         _port = config['gateway']?['port'] as int? ?? 18789;
-
-        bool changed = false;
-        config.putIfAbsent('gateway', () => <String, dynamic>{});
-        final gw = config['gateway'] as Map<String, dynamic>;
-
-        // Auto-generate token if missing
-        if (_gatewayToken == null || _gatewayToken!.isEmpty) {
-          gw['auth'] = {
-            'mode': 'token',
-            'token': 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}',
-          };
-          _gatewayToken = gw['auth']['token'] as String;
-          changed = true;
-        }
-
-        // Ensure controlUi is enabled with device auth disabled (for in-app WS chat)
-        if (gw['controlUi'] == null) gw['controlUi'] = <String, dynamic>{};
-        final controlUi = gw['controlUi'] as Map<String, dynamic>;
-        if (controlUi['enabled'] != true ||
-            controlUi['dangerouslyDisableDeviceAuth'] != true ||
-            controlUi['allowInsecureAuth'] != true) {
-          controlUi['enabled'] = true;
-          controlUi['dangerouslyDisableDeviceAuth'] = true;
-          controlUi['allowInsecureAuth'] = true;
-          changed = true;
-        }
-
-        if (changed) {
-          configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
-          // Restart to pick up changes
-          try { await NativeBridge.restartGateway(); } catch (_) {}
-          await Future.delayed(const Duration(seconds: 3));
-        }
       }
     } catch (_) {}
   }
 
-  void _connectWebSocket() {
-    _ws?.dispose();
-
-    _ws = GatewayWebSocket(
-      host: '127.0.0.1',
-      port: _port,
-      token: _gatewayToken,
-      sessionKey: _sessionKey,
-    );
-
-    _connSub = _ws!.connectionState.listen((connected) {
-      setState(() => _wsConnected = connected);
-    });
-
-    _eventSub = _ws!.events.listen(_onGatewayEvent);
-
-    _ws!.connect();
-  }
-
-  void _onGatewayEvent(GatewayEvent event) {
-    switch (event.event) {
-      case 'hello':
-        // Connected — load history + agent identity
-        _loadChatHistory();
-        _loadAgentIdentity();
-        break;
-
-      case 'chat':
-        _handleChatEvent(event.payload);
-        break;
-
-      case 'agent':
-        _handleAgentEvent(event.payload);
-        break;
-    }
-  }
-
-  Future<void> _loadChatHistory() async {
+  Future<void> _loadHistory() async {
     try {
-      final messages = await _ws!.chatHistory(limit: 200);
-      setState(() {
-        _messages.clear();
-        for (final m in messages) {
-          if (m is! Map) continue;
-          final msg = _parseGatewayMessage(m as Map<String, dynamic>);
-          if (msg != null) _messages.add(msg);
-        }
-      });
-      _scrollToBottom();
-    } catch (_) {}
-  }
-
-  Future<void> _loadAgentIdentity() async {
-    try {
-      final identity = await _ws!.agentIdentity();
-      if (identity != null && mounted) {
+      final histFile = File('$_filesDir/.openclaw/chat_history.json');
+      if (histFile.existsSync()) {
+        final list = json.decode(histFile.readAsStringSync()) as List;
         setState(() {
-          _agentName = identity['name'] as String? ?? 'OpenClaw';
-        });
-      }
-    } catch (_) {}
-  }
-
-  /// Parse a gateway message into our display format.
-  _ChatMessage? _parseGatewayMessage(Map<String, dynamic> msg) {
-    final role = (msg['role'] as String? ?? '').toLowerCase();
-    if (role != 'user' && role != 'assistant') return null;
-
-    // Extract text from content array or text field
-    String text = '';
-    final content = msg['content'];
-    if (content is String) {
-      text = content;
-    } else if (content is List) {
-      final textParts = <String>[];
-      for (final part in content) {
-        if (part is Map) {
-          if (part['type'] == 'text' && part['text'] is String) {
-            textParts.add(part['text'] as String);
-          } else if (part['type'] == 'tool_use') {
-            textParts.add('🔧 ${part['name'] ?? 'tool'}');
-          } else if (part['type'] == 'tool_result') {
-            // Skip tool results in display
-          }
-        }
-      }
-      text = textParts.join('\n');
-    }
-
-    // Skip NO_REPLY messages
-    if (text.trim() == 'NO_REPLY') return null;
-    if (text.isEmpty) return null;
-
-    final ts = msg['timestamp'];
-    DateTime? time;
-    if (ts is int) {
-      time = DateTime.fromMillisecondsSinceEpoch(ts);
-    } else if (ts is String) {
-      time = DateTime.tryParse(ts);
-    }
-
-    return _ChatMessage(
-      text: text,
-      isUser: role == 'user',
-      time: time ?? DateTime.now(),
-    );
-  }
-
-  void _handleChatEvent(dynamic payload) {
-    if (payload is! Map) return;
-    final p = payload as Map<String, dynamic>;
-
-    // Only handle events for our session
-    if (p['sessionKey'] != _sessionKey) return;
-
-    final state = p['state'] as String?;
-
-    switch (state) {
-      case 'delta':
-        _handleDelta(p);
-        break;
-      case 'final':
-        _handleFinal(p);
-        break;
-      case 'aborted':
-        _handleAborted(p);
-        break;
-      case 'error':
-        _handleError(p);
-        break;
-    }
-  }
-
-  void _handleDelta(Map<String, dynamic> p) {
-    final msg = p['message'];
-    if (msg == null) return;
-
-    String? text;
-    if (msg is Map) {
-      final content = msg['content'];
-      if (content is String) {
-        text = content;
-      } else if (content is List) {
-        final parts = content.whereType<Map>()
-            .where((c) => c['type'] == 'text')
-            .map((c) => c['text'] as String? ?? '')
-            .join();
-        text = parts;
-      }
-      // Also try 'text' field
-      text ??= msg['text'] as String?;
-    }
-
-    if (text != null && text.isNotEmpty && text.trim() != 'NO_REPLY') {
-      if (text.length >= _streamBuffer.length) {
-        _streamBuffer = text;
-        setState(() {
-          // Update the last assistant message (streaming placeholder)
-          if (_messages.isNotEmpty && !_messages.last.isUser) {
-            _messages.last.text = _streamBuffer;
+          _messages.clear();
+          for (final m in list) {
+            _messages.add(_ChatMessage.fromJson(m as Map<String, dynamic>));
           }
         });
         _scrollToBottom();
       }
-    }
+    } catch (_) {}
   }
 
-  void _handleFinal(Map<String, dynamic> p) {
-    final msg = p['message'];
-    final parsed = msg is Map<String, dynamic> ? _parseGatewayMessage(msg) : null;
-
-    setState(() {
-      // Remove streaming placeholder
-      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
-        _messages.removeLast();
-      }
-
-      if (parsed != null) {
-        _messages.add(parsed);
-      } else if (_streamBuffer.trim().isNotEmpty && _streamBuffer.trim() != 'NO_REPLY') {
-        _messages.add(_ChatMessage(
-          text: _streamBuffer,
-          isUser: false,
-          time: DateTime.now(),
-        ));
-      }
-
-      _sending = false;
-      _currentRunId = null;
-      _streamBuffer = '';
-      _activeTools.clear();
-    });
-    _scrollToBottom();
+  Future<void> _saveHistory() async {
+    try {
+      final histFile = File('$_filesDir/.openclaw/chat_history.json');
+      final toSave = _messages.length > 200 ? _messages.sublist(_messages.length - 200) : _messages;
+      histFile.writeAsStringSync(json.encode(toSave.map((m) => m.toJson()).toList()));
+    } catch (_) {}
   }
 
-  void _handleAborted(Map<String, dynamic> p) {
-    setState(() {
-      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
-        if (_streamBuffer.trim().isNotEmpty) {
-          _messages.last.text = _streamBuffer + '\n\n⚠️ (aborted)';
-        } else {
-          _messages.removeLast();
-        }
-      }
-      _sending = false;
-      _currentRunId = null;
-      _streamBuffer = '';
-      _activeTools.clear();
-    });
+  List<Map<String, String>> _buildContext() {
+    final recent = _messages.length > 20 ? _messages.sublist(_messages.length - 20) : _messages;
+    return recent
+        .where((m) => !m.isError)
+        .map((m) => {
+              'role': m.isUser ? 'user' : 'assistant',
+              'content': m.text,
+            })
+        .toList();
   }
 
-  void _handleError(Map<String, dynamic> p) {
-    final errorMsg = p['errorMessage'] as String? ?? 'Unknown error';
-    setState(() {
-      if (_messages.isNotEmpty && !_messages.last.isUser && _sending) {
-        _messages.last.text = '❌ $errorMsg';
-        _messages.last.isError = true;
+  /// Auto-enable chatCompletions endpoint if 404.
+  Future<void> _ensureEndpointEnabled() async {
+    try {
+      final configFile = File('$_filesDir/.openclaw/openclaw.json');
+      if (!configFile.existsSync()) return;
+      final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
+      bool changed = false;
+
+      config.putIfAbsent('gateway', () => <String, dynamic>{});
+      final gw = config['gateway'] as Map<String, dynamic>;
+      gw.putIfAbsent('http', () => <String, dynamic>{});
+      final http = gw['http'] as Map<String, dynamic>;
+      http.putIfAbsent('endpoints', () => <String, dynamic>{});
+      final endpoints = http['endpoints'] as Map<String, dynamic>;
+
+      if (endpoints['chatCompletions']?['enabled'] != true) {
+        endpoints['chatCompletions'] = {'enabled': true};
+        changed = true;
       }
-      _sending = false;
-      _currentRunId = null;
-      _streamBuffer = '';
-      _activeTools.clear();
-    });
-  }
 
-  void _handleAgentEvent(dynamic payload) {
-    if (payload is! Map) return;
-    // Track tool usage for display
-    final toolName = payload['tool'] as String?;
-    final status = payload['status'] as String?;
+      if (gw['auth']?['token'] == null) {
+        gw['auth'] = {'mode': 'token', 'token': 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}'};
+        _gatewayToken = gw['auth']['token'] as String;
+        changed = true;
+      }
 
-    if (toolName != null) {
-      setState(() {
-        if (status == 'started') {
-          _activeTools.add(toolName);
-        } else {
-          _activeTools.remove(toolName);
-        }
-      });
-    }
+      if (changed) {
+        configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
+        try { await NativeBridge.restartGateway(); } catch (_) {}
+        await Future.delayed(const Duration(seconds: 3));
+        await _loadConfig();
+      }
+    } catch (_) {}
   }
 
   Future<void> _send() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty || _sending || !_wsConnected) return;
+    if (text.isEmpty || _sending) return;
 
     _inputController.clear();
 
+    final userMsg = _ChatMessage(text: text, isUser: true, time: DateTime.now());
     setState(() {
-      _messages.add(_ChatMessage(text: text, isUser: true, time: DateTime.now()));
+      _messages.add(userMsg);
       _sending = true;
       _streamBuffer = '';
-      // Add streaming placeholder
-      _messages.add(_ChatMessage(text: '', isUser: false, time: DateTime.now()));
     });
     _scrollToBottom();
 
+    final assistantMsg = _ChatMessage(text: '', isUser: false, time: DateTime.now());
+    setState(() => _messages.add(assistantMsg));
+
     try {
-      _currentRunId = await _ws!.chatSend(text);
+      final context = _buildContext();
+      if (context.isNotEmpty && context.last['content']?.isEmpty == true) {
+        context.removeLast();
+      }
+
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 5);
+
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:$_port/v1/chat/completions'),
+      );
+      request.headers.set('Content-Type', 'application/json');
+      if (_gatewayToken != null) {
+        request.headers.set('Authorization', 'Bearer $_gatewayToken');
+      }
+
+      final body = json.encode({
+        'model': 'default',
+        'messages': context,
+        'stream': true,
+      });
+      request.add(utf8.encode(body));
+
+      final response = await request.close().timeout(const Duration(seconds: 120));
+
+      if (response.statusCode == 200) {
+        await for (final chunk in response.transform(utf8.decoder)) {
+          for (final line in chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            final data = line.substring(6).trim();
+            if (data == '[DONE]') break;
+            try {
+              final obj = json.decode(data) as Map<String, dynamic>;
+              final delta = obj['choices']?[0]?['delta']?['content'] as String?;
+              if (delta != null) {
+                _streamBuffer += delta;
+                setState(() => assistantMsg.text = _streamBuffer);
+                _scrollToBottom();
+              }
+            } catch (_) {}
+          }
+        }
+        if (_streamBuffer.isEmpty) {
+          setState(() => assistantMsg.text = '(Empty response)');
+        }
+        client.close();
+      } else if (response.statusCode == 404 && !_endpointChecked) {
+        await response.transform(utf8.decoder).join();
+        client.close();
+        _endpointChecked = true;
+        setState(() {
+          assistantMsg.text = 'Enabling chat API... Try again in ~5 seconds.';
+          assistantMsg.isError = true;
+        });
+        await _ensureEndpointEnabled();
+      } else {
+        final respBody = await response.transform(utf8.decoder).join();
+        client.close();
+        setState(() {
+          assistantMsg.text = 'Error ${response.statusCode}: $respBody';
+          assistantMsg.isError = true;
+        });
+      }
     } catch (e) {
       setState(() {
-        if (_messages.isNotEmpty && !_messages.last.isUser) {
-          _messages.last.text = '❌ $e';
-          _messages.last.isError = true;
-        }
-        _sending = false;
+        assistantMsg.text = '❌ Connection failed: $e';
+        assistantMsg.isError = true;
       });
     }
-  }
 
-  Future<void> _abort() async {
-    if (!_sending) return;
-    try {
-      await _ws!.chatAbort(_currentRunId);
-    } catch (_) {}
+    setState(() => _sending = false);
+    _saveHistory();
+    _scrollToBottom();
   }
 
   Future<void> _regenerate() async {
     if (_sending) return;
-    // Remove last assistant message
     for (int i = _messages.length - 1; i >= 0; i--) {
       if (!_messages[i].isUser) {
         setState(() => _messages.removeAt(i));
         break;
       }
     }
-    // Find last user message and resend
     for (int i = _messages.length - 1; i >= 0; i--) {
       if (_messages[i].isUser) {
         final text = _messages[i].text;
@@ -408,6 +248,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messages[index].text;
     setState(() => _messages.removeRange(index, _messages.length));
     _inputController.text = text;
+    _saveHistory();
   }
 
   void _clearChat() async {
@@ -415,7 +256,6 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Clear chat?'),
-        content: const Text('This clears local display only. Server history remains.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
@@ -424,6 +264,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (confirm == true) {
       setState(() => _messages.clear());
+      _saveHistory();
     }
   }
 
@@ -481,11 +322,14 @@ class _ChatScreenState extends State<ChatScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _agentName ?? 'OpenClaw',
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                const Text(
+                  'OpenClaw',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                 ),
-                _buildSubtitle(isDark),
+                Text(
+                  _sending ? 'typing...' : 'online',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                ),
               ],
             ),
           ],
@@ -496,30 +340,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          // Connection banner
-          if (!_wsConnected)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.orange.shade800,
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text('Connecting to gateway...', style: TextStyle(color: Colors.white, fontSize: 13)),
-                  ),
-                  TextButton(
-                    onPressed: _connectWebSocket,
-                    child: const Text('Retry', style: TextStyle(color: Colors.white)),
-                  ),
-                ],
-              ),
-            ),
-
           // Messages
           Expanded(
             child: Stack(
@@ -532,8 +352,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: isDark ? Colors.white10 : Colors.black12,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(
-                            _wsConnected ? 'Start a conversation' : 'Waiting for connection...',
+                          child: const Text(
+                            'Start a conversation',
                             style: const TextStyle(fontSize: 13),
                           ),
                         ),
@@ -566,33 +386,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-
-          // Tool calls banner
-          if (_activeTools.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              color: isDark ? const Color(0xFF1A2736) : const Color(0xFFF5F0E8),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 12, height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '🔧 Using ${_activeTools.last}...',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.white60 : Colors.black54,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
 
           // Input bar
           Container(
@@ -634,28 +427,25 @@ class _ChatScreenState extends State<ChatScreen> {
                         maxLines: 6,
                         minLines: 1,
                         textCapitalization: TextCapitalization.sentences,
-                        enabled: _wsConnected,
+                        enabled: !_sending,
                       ),
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // Send / Stop button
+                  // Send button
                   Container(
                     width: 42, height: 42,
                     decoration: BoxDecoration(
-                      color: _sending
-                          ? Colors.red.shade700
-                          : (!_wsConnected ? Colors.grey : AppColors.accent),
+                      color: _sending ? Colors.grey : AppColors.accent,
                       shape: BoxShape.circle,
                     ),
                     child: _sending
-                        ? IconButton(
-                            onPressed: _abort,
-                            icon: const Icon(Icons.stop, color: Colors.white, size: 20),
-                            padding: EdgeInsets.zero,
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : IconButton(
-                            onPressed: _wsConnected ? _send : null,
+                            onPressed: _send,
                             icon: const Icon(Icons.send, color: Colors.white, size: 18),
                             padding: EdgeInsets.zero,
                           ),
@@ -665,29 +455,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSubtitle(bool isDark) {
-    if (_sending && _activeTools.isNotEmpty) {
-      return Text(
-        'using ${_activeTools.last}...',
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-      );
-    }
-    if (_sending) {
-      return const Text(
-        'typing...',
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-      );
-    }
-    return Text(
-      _wsConnected ? 'online' : 'connecting...',
-      style: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w400,
-        color: _wsConnected ? Colors.greenAccent : Colors.white60,
       ),
     );
   }
@@ -935,9 +702,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
-    _eventSub?.cancel();
-    _connSub?.cancel();
-    _ws?.dispose();
     super.dispose();
   }
 }
@@ -954,6 +718,20 @@ class _ChatMessage {
     this.isError = false,
     this.time,
   });
+
+  Map<String, dynamic> toJson() => {
+    'text': text,
+    'isUser': isUser,
+    'isError': isError,
+    'time': time?.toIso8601String(),
+  };
+
+  factory _ChatMessage.fromJson(Map<String, dynamic> j) => _ChatMessage(
+    text: j['text'] as String? ?? '',
+    isUser: j['isUser'] as bool? ?? false,
+    isError: j['isError'] as bool? ?? false,
+    time: j['time'] != null ? DateTime.tryParse(j['time'] as String) : null,
+  );
 }
 
 /// Typing dots animation.
