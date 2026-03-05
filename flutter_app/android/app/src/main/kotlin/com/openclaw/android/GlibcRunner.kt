@@ -17,15 +17,17 @@ class GlibcRunner(
     val nodeBin  = "$nodeDir/bin/node"
 
     /**
-     * Write executable wrapper scripts for node/npm/openclaw into /data/local/tmp/.
-     * This directory is executable on all Android (ADB staging area), unlike filesDir
-     * which is noexec on GrapheneOS. These wrappers allow any subprocess or shell to
-     * invoke `node`, `npm`, `openclaw` via execve — not just our PTY shell functions.
+     * Write executable wrapper scripts into filesDir/bin/.
+     * These wrappers use ld.so to bypass noexec on filesDir and allow any subprocess
+     * or shell to invoke node, npm, openclaw etc. via execve.
+     * Note: /data/local/tmp/ is EACCES on Android 16 (Pixel 9a), so we use filesDir/bin/.
+     * The wrappers themselves are shell scripts interpreted by /system/bin/sh (always executable).
      */
     val binDir    = "$filesDir/bin"
 
     fun installWrappers() {
-        val wrapperDir = "/data/local/tmp"
+        val wrapperDir = binDir
+        File(wrapperDir).mkdirs()
         val wrapperContent = mapOf(
             "node" to """#!/system/bin/sh
 exec "$ldSo" --library-path "$glibcDir/lib" "$nodeBin" "$@"
@@ -58,7 +60,9 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/go" "$@"
 exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
 """,
             "git" to """#!/system/bin/sh
-exec "$ldSo" --library-path "$glibcDir/lib" "$glibcDir/bin/git" "$@"
+export GIT_EXEC_PATH="$filesDir/git"
+export SSL_CERT_FILE="$filesDir/git/ssl/cert.pem"
+exec "$filesDir/git/lib/ld-musl-aarch64.so.1" --library-path "$filesDir/git/lib" "$filesDir/git/git" "$@"
 """,
             "make" to """#!/system/bin/sh
 exec "$ldSo" --library-path "$glibcDir/lib" "$glibcDir/bin/make" "$@"
@@ -96,7 +100,7 @@ exec "$binDir/busybox" "$@"
         "GOROOT"              to goDir,
         "GOPATH"              to "$filesDir/gopath",
         "GOCACHE"             to "$filesDir/tmp/go-cache",
-        "PATH"                to "/data/local/tmp:$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
+        "PATH"                to "$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
     )
 
     /** Bootstrap env — no NODE_OPTIONS, glibc-compat.js not yet in place */

@@ -61,7 +61,7 @@ class AppConstants {
 
   // Busybox 1.37.0 static binary (Alpine musl, 1.1 MB)
   static const String busyboxUrl =
-      'https://github.com/Lafourkad/openclaw-android/releases/download/tools-v1/busybox-aarch64';
+      'https://github.com/Lafourkad/openclaw-android/releases/download/tools-v1/busybox-aarch64.bin';
 
   // Git 2.52.0 + musl libs bundle (Alpine, 7 MB — includes HTTPS support)
   static const String gitBundleUrl =
