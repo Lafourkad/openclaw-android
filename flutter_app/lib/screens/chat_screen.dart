@@ -31,11 +31,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _init();
   }
 
+  bool _endpointChecked = false;
+
   Future<void> _init() async {
     _filesDir = await NativeBridge.getFilesDir();
     await _loadToken();
     await _loadHistory();
-    await _ensureEndpointEnabled();
+    // Don't auto-restart on init — only enable if first send fails with 404
   }
 
   Future<void> _loadToken() async {
@@ -199,16 +201,24 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         client.close();
+      } else if (response.statusCode == 404 && !_endpointChecked) {
+        final body = await response.transform(utf8.decoder).join();
+        client.close();
+        _endpointChecked = true;
+        setState(() {
+          assistantMsg.text = 'Chat API not enabled. Enabling and restarting gateway...\n'
+              'Try again in ~5 seconds.';
+          assistantMsg.isError = true;
+        });
+        await _ensureEndpointEnabled();
       } else if (response.statusCode == 404) {
         final body = await response.transform(utf8.decoder).join();
         client.close();
         setState(() {
-          assistantMsg.text = 'Chat API not enabled. Enabling now...\n'
-              'Please try again in a few seconds.';
+          assistantMsg.text = 'Chat API endpoint not found (404).\n'
+              'Check Settings → Gateway → HTTP API → Chat Completions.';
           assistantMsg.isError = true;
         });
-        // Try to auto-enable
-        await _ensureEndpointEnabled();
       } else {
         final body = await response.transform(utf8.decoder).join();
         client.close();
@@ -219,7 +229,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       setState(() {
-        assistantMsg.text = 'Connection failed.\n\nMake sure the gateway is running.';
+        assistantMsg.text = 'Connection failed: $e\n\nPort: $_port | Token: ${_gatewayToken != null ? "set" : "missing"}';
         assistantMsg.isError = true;
       });
     }
