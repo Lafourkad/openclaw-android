@@ -267,6 +267,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
         _terminal,
         controller: _terminalController,
         autofocus: true,
+        deleteDetection: true,
         backgroundOpacity: 0,
         theme: const TerminalTheme(
           cursor: Color(0xFFDC2626),
