@@ -247,9 +247,8 @@ class ConfigGenerator {
         'botToken': config.telegramBotToken,
       };
       if (config.telegramUserId.isNotEmpty) {
-        // User provided their ID — auto-approve them, no pairing needed
         tgConfig['dmPolicy'] = 'allowlist';
-        tgConfig['dmAllowFrom'] = [
+        tgConfig['allowFrom'] = [
           int.tryParse(config.telegramUserId) ?? config.telegramUserId,
         ];
       } else {
