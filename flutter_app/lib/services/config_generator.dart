@@ -242,11 +242,20 @@ class ConfigGenerator {
     final channels = <String, dynamic>{};
 
     if (config.enableTelegram && config.telegramBotToken.isNotEmpty) {
-      channels['telegram'] = {
+      final tgConfig = <String, dynamic>{
         'enabled': true,
         'botToken': config.telegramBotToken,
-        'dmPolicy': 'pairing',
       };
+      if (config.telegramUserId.isNotEmpty) {
+        // User provided their ID — auto-approve them, no pairing needed
+        tgConfig['dmPolicy'] = 'allowlist';
+        tgConfig['dmAllowFrom'] = [
+          int.tryParse(config.telegramUserId) ?? config.telegramUserId,
+        ];
+      } else {
+        tgConfig['dmPolicy'] = 'pairing';
+      }
+      channels['telegram'] = tgConfig;
     }
 
     if (config.enableDiscord && config.discordBotToken.isNotEmpty) {
