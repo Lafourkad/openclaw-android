@@ -69,23 +69,48 @@ class _ChatScreenState extends State<ChatScreen> {
         _gatewayToken = config['gateway']?['auth']?['token'] as String?;
         _port = config['gateway']?['port'] as int? ?? 18789;
 
+        bool changed = false;
+
         // Auto-generate token if missing
         if (_gatewayToken == null || _gatewayToken!.isEmpty) {
-          _ensureToken(config, configFile);
+          config.putIfAbsent('gateway', () => <String, dynamic>{});
+          final gw = config['gateway'] as Map<String, dynamic>;
+          gw['auth'] = {
+            'mode': 'token',
+            'token': 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}',
+          };
+          _gatewayToken = gw['auth']['token'] as String;
+          changed = true;
+        }
+
+        // Ensure controlUi is enabled with device auth disabled (for in-app WS chat)
+        final gw = config['gateway'] as Map<String, dynamic>? ?? {};
+        config['gateway'] = gw;
+        final controlUi = gw['controlUi'] as Map<String, dynamic>? ?? {};
+        if (controlUi['enabled'] != true ||
+            controlUi['dangerouslyDisableDeviceAuth'] != true ||
+            controlUi['allowInsecureAuth'] != true) {
+          gw['controlUi'] = {
+            'enabled': true,
+            'dangerouslyDisableDeviceAuth': true,
+            'allowInsecureAuth': true,
+            ...controlUi, // preserve user overrides
+            // Force these even if user set them differently
+            'enabled': true,
+            'dangerouslyDisableDeviceAuth': true,
+            'allowInsecureAuth': true,
+          };
+          changed = true;
+        }
+
+        if (changed) {
+          configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
+          // Restart to pick up changes
+          try { await NativeBridge.restartGateway(); } catch (_) {}
+          await Future.delayed(const Duration(seconds: 3));
         }
       }
     } catch (_) {}
-  }
-
-  void _ensureToken(Map<String, dynamic> config, File configFile) {
-    config.putIfAbsent('gateway', () => <String, dynamic>{});
-    final gw = config['gateway'] as Map<String, dynamic>;
-    gw['auth'] = {
-      'mode': 'token',
-      'token': 'openclaw-local-${DateTime.now().millisecondsSinceEpoch}',
-    };
-    _gatewayToken = gw['auth']['token'] as String;
-    configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
   }
 
   void _connectWebSocket() {

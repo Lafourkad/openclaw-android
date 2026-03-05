@@ -6,7 +6,7 @@ import 'dart:math';
 /// WebSocket JSON-RPC client for the OpenClaw gateway.
 /// Uses the same protocol as the web Control UI dashboard.
 class GatewayWebSocket {
-  static const String clientId = 'openclaw-android-native';
+  static const String clientId = 'openclaw-android';
   static const String clientVersion = '1.9.0';
   static const String clientMode = 'webchat';
 
@@ -149,7 +149,10 @@ class GatewayWebSocket {
     if (_closed) return;
 
     try {
-      _ws = await WebSocket.connect('ws://$host:$port');
+      _ws = await WebSocket.connect(
+        'ws://$host:$port',
+        headers: {'Origin': 'http://$host:$port'},
+      );
       _ws!.listen(
         _onMessage,
         onDone: () => _onClose('connection closed'),

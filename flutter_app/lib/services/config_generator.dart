@@ -288,9 +288,19 @@ class ConfigGenerator {
       'dmScope': 'per-channel-peer',
     };
 
-    // Gateway
+    // Gateway — enable control UI WebSocket for in-app chat
+    final gatewayToken = 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}';
     result['gateway'] = {
       'port': 18789,
+      'auth': {
+        'mode': 'token',
+        'token': gatewayToken,
+      },
+      'controlUi': {
+        'enabled': true,
+        'dangerouslyDisableDeviceAuth': true,
+        'allowInsecureAuth': true,
+      },
     };
 
     return result;
