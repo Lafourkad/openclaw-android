@@ -244,7 +244,7 @@ class ConfigGenerator {
     if (config.enableTelegram && config.telegramBotToken.isNotEmpty) {
       channels['telegram'] = {
         'enabled': true,
-        'token': config.telegramBotToken,
+        'botToken': config.telegramBotToken,
         'dmPolicy': 'pairing',
       };
     }
@@ -252,7 +252,7 @@ class ConfigGenerator {
     if (config.enableDiscord && config.discordBotToken.isNotEmpty) {
       final discordConfig = <String, dynamic>{
         'enabled': true,
-        'token': config.discordBotToken,
+        'botToken': config.discordBotToken,
       };
       if (config.discordUserId.isNotEmpty) {
         discordConfig['dm'] = {
