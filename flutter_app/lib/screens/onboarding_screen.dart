@@ -1,93 +1,133 @@
 import 'package:flutter/material.dart';
-import '../app.dart';
+import '../services/config_generator.dart';
+import 'onboarding/provider_step.dart';
+import 'onboarding/channel_step.dart';
+import 'onboarding/summary_step.dart';
 import 'dashboard_screen.dart';
-import 'terminal_screen.dart';
 
-/// Onboarding screen — shown after first-time setup.
-/// Launches the built-in terminal pre-loaded with `openclaw onboard`.
-class OnboardingScreen extends StatelessWidget {
+/// Multi-step graphical onboarding wizard.
+/// Replaces the old "open terminal and run openclaw onboard" flow.
+class OnboardingScreen extends StatefulWidget {
   final bool isFirstRun;
 
   const OnboardingScreen({super.key, this.isFirstRun = false});
 
-  void _openTerminal(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const TerminalScreen(initialCommand: 'openclaw onboard\r\n'),
-      ),
+  @override
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  final _pageController = PageController();
+  final _config = OnboardingConfig();
+  int _currentPage = 0;
+  static const _totalPages = 3;
+
+  void _goToPage(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
     );
+    setState(() => _currentPage = page);
   }
 
-  void _goToDashboard(BuildContext context) {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const DashboardScreen()),
-      (route) => false,
-    );
+  void _next() {
+    if (_currentPage < _totalPages - 1) {
+      _goToPage(_currentPage + 1);
+    }
+  }
+
+  void _back() {
+    if (_currentPage > 0) {
+      _goToPage(_currentPage - 1);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      appBar: isFirstRun ? null : AppBar(title: const Text('Configure OpenClaw')),
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+      appBar: AppBar(
+        title: const Text('Setup'),
+        automaticallyImplyLeading: !widget.isFirstRun,
+        actions: [
+          if (!widget.isFirstRun)
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                  (route) => false,
+                );
+              },
+              child: const Text('Skip'),
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Step indicator
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            child: Row(
+              children: List.generate(_totalPages, (i) {
+                return Expanded(
+                  child: Container(
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: i <= _currentPage
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppColors.darkSurface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.accent.withOpacity(0.3)),
-                  ),
-                  child: const Icon(Icons.terminal, size: 48, color: AppColors.accent),
-                ),
-                const SizedBox(height: 24),
                 Text(
-                  'Configure OpenClaw',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
+                  ['AI Provider', 'Channels', 'Launch'][_currentPage],
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const Spacer(),
                 Text(
-                  'Run the interactive setup to configure\nyour API keys and channels.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey[500], height: 1.6),
-                ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _openTerminal(context),
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Run openclaw onboard'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.accent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _goToDashboard(context),
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('Skip — Go to Dashboard'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
+                  '${_currentPage + 1} / $_totalPages',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+
+          // Pages
+          Expanded(
+            child: PageView(
+              controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
+              onPageChanged: (i) => setState(() => _currentPage = i),
+              children: [
+                ProviderStep(config: _config, onNext: _next),
+                ChannelStep(config: _config, onNext: _next, onBack: _back),
+                SummaryStep(config: _config, onBack: _back),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
