@@ -60,7 +60,8 @@ class SetupState {
   /// True when the core bootstrap is done (before optional packages)
   bool get isCoreComplete =>
       step == SetupStep.installingPackages ||
-      step == SetupStep.complete;
+      step == SetupStep.complete ||
+      (step == SetupStep.installingOpenClaw && progress >= 1.0);
 
   String get stepLabel {
     switch (step) {

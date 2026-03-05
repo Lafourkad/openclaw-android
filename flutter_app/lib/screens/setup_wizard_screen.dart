@@ -137,6 +137,30 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       return _buildCompletionView(theme);
     }
 
+    // Core complete — show all steps as done
+    if (state.isCoreComplete && _phase == 'core') {
+      return ListView(
+        children: [
+          for (final (num, label) in [
+            (1, 'Download glibc runtime'),
+            (2, 'Install Node.js'),
+            (3, 'Install OpenClaw'),
+          ])
+            ProgressStep(
+              stepNumber: num,
+              label: label,
+              isActive: false,
+              isComplete: true,
+            ),
+          const ProgressStep(
+            stepNumber: 4,
+            label: 'Core setup complete!',
+            isComplete: true,
+          ),
+        ],
+      );
+    }
+
     final steps = <(int, String, SetupStep)>[
       (1, 'Download glibc runtime', SetupStep.downloadingGlibc),
       (2, 'Install Node.js', SetupStep.downloadingNode),
