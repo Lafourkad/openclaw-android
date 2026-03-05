@@ -10,7 +10,7 @@ import 'configure_screen.dart';
 import 'web_dashboard_screen.dart';
 import 'logs_screen.dart';
 import 'providers_screen.dart';
-import 'settings_screen.dart';
+import 'settings/settings_main_screen.dart';
 
 
 class DashboardScreen extends StatelessWidget {
@@ -27,7 +27,7 @@ class DashboardScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              MaterialPageRoute(builder: (_) => const SettingsMainScreen()),
             ),
           ),
         ],

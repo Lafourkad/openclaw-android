@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'providers/setup_provider.dart';
 import 'providers/gateway_provider.dart';
 import 'providers/node_provider.dart';
+import 'services/config_service.dart';
 import 'screens/splash_screen.dart';
 
 /// Centralized color palette for the entire app.
@@ -43,6 +44,7 @@ class OpenClawApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => SetupProvider()),
         ChangeNotifierProvider(create: (_) => GatewayProvider()),
+        ChangeNotifierProvider(create: (_) => ConfigService()),
         ChangeNotifierProxyProvider<GatewayProvider, NodeProvider>(
           create: (_) => NodeProvider(),
           update: (_, gatewayProvider, nodeProvider) {
