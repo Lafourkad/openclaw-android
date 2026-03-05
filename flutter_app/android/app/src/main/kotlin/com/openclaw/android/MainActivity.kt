@@ -255,6 +255,68 @@ class MainActivity : FlutterActivity() {
                         result.error("MARK_DONE_ERROR", e.message, null)
                     }
                 }
+                // ── Optional package installation ──────────────────
+                "installStaticBinary" -> {
+                    val binaryPath = call.argument<String>("binaryPath")
+                    val destRelPath = call.argument<String>("destRelPath")
+                    val installApplets = call.argument<Boolean>("installApplets") ?: false
+                    if (binaryPath != null && destRelPath != null) {
+                        Thread {
+                            try {
+                                bootstrapManager.installStaticBinary(binaryPath, destRelPath, installApplets)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("INSTALL_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "binaryPath and destRelPath required", null)
+                    }
+                }
+                "installTermuxDeb" -> {
+                    val debPath = call.argument<String>("debPath")
+                    if (debPath != null) {
+                        Thread {
+                            try {
+                                bootstrapManager.installTermuxDeb(debPath)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("INSTALL_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "debPath required", null)
+                    }
+                }
+                "markPackageDone" -> {
+                    val markerId = call.argument<String>("markerId")
+                    if (markerId != null) {
+                        bootstrapManager.markPackageDone(markerId)
+                        result.success(true)
+                    } else {
+                        result.error("INVALID_ARGS", "markerId required", null)
+                    }
+                }
+                "isPackageInstalled" -> {
+                    val checkPath = call.argument<String>("checkPath")
+                    val doneMarker = call.argument<String>("doneMarker")
+                    if (checkPath != null && doneMarker != null) {
+                        result.success(bootstrapManager.isPackageInstalled(checkPath, doneMarker))
+                    } else {
+                        result.error("INVALID_ARGS", "checkPath and doneMarker required", null)
+                    }
+                }
+                "installWrappers" -> {
+                    Thread {
+                        try {
+                            val runner = GlibcRunner(filesDir, nativeLibDir)
+                            runner.installWrappers()
+                            runOnUiThread { result.success(true) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("WRAPPER_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
                 "runNode" -> {
                     val args = call.argument<List<String>>("args")
                     val timeout = call.argument<Int>("timeout")?.toLong() ?: 900L

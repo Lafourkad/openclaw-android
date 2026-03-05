@@ -3,8 +3,8 @@ enum SetupStep {
   downloadingGlibc,
   downloadingNode,
   installingOpenClaw,
-  installingPython,
-  installingGo,
+  // Optional packages — installed after core
+  installingPackages,
   complete,
   error,
 }
@@ -15,11 +15,23 @@ class SetupState {
   final String message;
   final String? error;
 
+  /// Currently installing package name (during installingPackages step)
+  final String? currentPackage;
+
+  /// Total optional packages to install
+  final int totalPackages;
+
+  /// Current package index (1-based)
+  final int currentPackageIndex;
+
   const SetupState({
     this.step = SetupStep.checkingStatus,
     this.progress = 0.0,
     this.message = '',
     this.error,
+    this.currentPackage,
+    this.totalPackages = 0,
+    this.currentPackageIndex = 0,
   });
 
   SetupState copyWith({
@@ -27,17 +39,28 @@ class SetupState {
     double? progress,
     String? message,
     String? error,
+    String? currentPackage,
+    int? totalPackages,
+    int? currentPackageIndex,
   }) {
     return SetupState(
       step: step ?? this.step,
       progress: progress ?? this.progress,
       message: message ?? this.message,
       error: error,
+      currentPackage: currentPackage ?? this.currentPackage,
+      totalPackages: totalPackages ?? this.totalPackages,
+      currentPackageIndex: currentPackageIndex ?? this.currentPackageIndex,
     );
   }
 
   bool get isComplete => step == SetupStep.complete;
   bool get hasError => step == SetupStep.error;
+
+  /// True when the core bootstrap is done (before optional packages)
+  bool get isCoreComplete =>
+      step == SetupStep.installingPackages ||
+      step == SetupStep.complete;
 
   String get stepLabel {
     switch (step) {
@@ -49,10 +72,10 @@ class SetupState {
         return 'Installing Node.js';
       case SetupStep.installingOpenClaw:
         return 'Installing OpenClaw';
-      case SetupStep.installingPython:
-        return 'Installing Python 3.13';
-      case SetupStep.installingGo:
-        return 'Installing Go';
+      case SetupStep.installingPackages:
+        return currentPackage != null
+            ? 'Installing $currentPackage'
+            : 'Installing packages...';
       case SetupStep.complete:
         return 'Setup complete';
       case SetupStep.error:
@@ -70,16 +93,14 @@ class SetupState {
         return 2;
       case SetupStep.installingOpenClaw:
         return 3;
-      case SetupStep.installingPython:
+      case SetupStep.installingPackages:
         return 4;
-      case SetupStep.installingGo:
-        return 5;
       case SetupStep.complete:
-        return 6;
+        return 5;
       case SetupStep.error:
         return -1;
     }
   }
 
-  static const int totalSteps = 5;
+  static const int totalSteps = 4;
 }

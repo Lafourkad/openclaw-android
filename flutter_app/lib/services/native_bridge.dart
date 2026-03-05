@@ -78,6 +78,47 @@ class NativeBridge {
     await _channel.invokeMethod('markBootstrapDone');
   }
 
+  // ── Optional package installation ──────────────────────────
+
+  /// Install a static binary (e.g. busybox) into filesDir
+  static Future<bool> installStaticBinary(
+    String binaryPath,
+    String destRelPath, {
+    bool installApplets = false,
+  }) async {
+    return await _channel.invokeMethod('installStaticBinary', {
+      'binaryPath': binaryPath,
+      'destRelPath': destRelPath,
+      'installApplets': installApplets,
+    });
+  }
+
+  /// Install a Termux glibc .deb into the glibc directory
+  static Future<bool> installTermuxDeb(String debPath) async {
+    return await _channel.invokeMethod('installTermuxDeb', {'debPath': debPath});
+  }
+
+  /// Write a done-marker for an optional package
+  static Future<void> markPackageDone(String markerId) async {
+    await _channel.invokeMethod('markPackageDone', {'markerId': markerId});
+  }
+
+  /// Check if a package is installed (by checkPath + doneMarker)
+  static Future<bool> isPackageInstalled(
+    String checkPath,
+    String doneMarker,
+  ) async {
+    return await _channel.invokeMethod('isPackageInstalled', {
+      'checkPath': checkPath,
+      'doneMarker': doneMarker,
+    });
+  }
+
+  /// Reinstall wrapper scripts (after new packages are installed)
+  static Future<void> installWrappers() async {
+    await _channel.invokeMethod('installWrappers');
+  }
+
   static Future<String> runNode(List<String> args, {int timeout = 900}) async {
     return await _channel.invokeMethod('runNode', {'args': args, 'timeout': timeout});
   }

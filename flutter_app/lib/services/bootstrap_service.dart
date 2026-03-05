@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import '../constants.dart';
 import '../models/setup_state.dart';
+import '../models/optional_package.dart';
 import 'native_bridge.dart';
+import 'package_service.dart';
 
 class BootstrapService {
   final Dio _dio = Dio();
@@ -42,26 +44,23 @@ class BootstrapService {
     }
   }
 
-  Future<void> runFullSetup({
+  /// Run the core bootstrap (glibc + Node + OpenClaw).
+  /// Optional packages are installed separately via [installPackages].
+  Future<void> runCoreSetup({
     required void Function(SetupState) onProgress,
   }) async {
     try {
-      // Start foreground service to keep app alive during setup
-      try {
-        await NativeBridge.startSetupService();
-      } catch (_) {}
+      try { await NativeBridge.startSetupService(); } catch (_) {}
 
       final filesDir = await NativeBridge.getFilesDir();
 
-      // Step 0: Cleanup partial extractions from previous failed attempts,
-      // then setup directories + copy glibc-compat.js from assets
+      // Step 0: Cleanup + setup directories
       onProgress(const SetupState(
         step: SetupStep.checkingStatus,
         progress: 0.0,
         message: 'Setting up directories...',
       ));
       _updateSetupNotification('Setting up directories...', progress: 2);
-      // Clean up stale partial state so re-extraction starts fresh
       try {
         final glibcDir = Directory('$filesDir/glibc');
         if (glibcDir.existsSync()) glibcDir.deleteSync(recursive: true);
@@ -74,7 +73,6 @@ class BootstrapService {
 
       // Step 1: Download glibc deb (0-25%)
       final glibcDebPath = '$filesDir/tmp/glibc.deb';
-
       _updateSetupNotification('Downloading glibc runtime...', progress: 5);
       onProgress(const SetupState(
         step: SetupStep.downloadingGlibc,
@@ -90,10 +88,8 @@ class BootstrapService {
             final progress = received / total;
             final mb = (received / 1024 / 1024).toStringAsFixed(1);
             final totalMb = (total / 1024 / 1024).toStringAsFixed(1);
-            final notifProgress = 5 + (progress * 15).round();
-            _updateSetupNotification(
-                'Downloading glibc: $mb / $totalMb MB',
-                progress: notifProgress);
+            _updateSetupNotification('Downloading glibc: $mb / $totalMb MB',
+                progress: 5 + (progress * 15).round());
             onProgress(SetupState(
               step: SetupStep.downloadingGlibc,
               progress: progress,
@@ -103,7 +99,6 @@ class BootstrapService {
         },
       );
 
-      // Extract glibc deb (25-35%)
       _updateSetupNotification('Extracting glibc runtime...', progress: 22);
       onProgress(const SetupState(
         step: SetupStep.downloadingGlibc,
@@ -111,10 +106,9 @@ class BootstrapService {
         message: 'Extracting glibc runtime...',
       ));
       await NativeBridge.extractGlibcDeb(glibcDebPath);
-      // Patch glibc to use our resolv.conf path (hardcoded Termux path → our filesDir)
       await NativeBridge.patchGlibcPaths();
 
-      // Step 1b: Download + extract gcc-libs (libstdc++.so.6, libgcc_s.so.1)
+      // Step 1b: GCC runtime libs
       final gccLibsPath = '$filesDir/tmp/gcc-libs.deb';
       _updateSetupNotification('Downloading GCC runtime...', progress: 28);
       onProgress(const SetupState(
@@ -147,10 +141,8 @@ class BootstrapService {
             final progress = received / total;
             final mb = (received / 1024 / 1024).toStringAsFixed(1);
             final totalMb = (total / 1024 / 1024).toStringAsFixed(1);
-            final notifProgress = 35 + (progress * 30).round();
-            _updateSetupNotification(
-                'Downloading Node.js: $mb / $totalMb MB',
-                progress: notifProgress);
+            _updateSetupNotification('Downloading Node.js: $mb / $totalMb MB',
+                progress: 35 + (progress * 30).round());
             onProgress(SetupState(
               step: SetupStep.downloadingNode,
               progress: progress,
@@ -160,7 +152,6 @@ class BootstrapService {
         },
       );
 
-      // Extract Node.js (70-75%)
       _updateSetupNotification('Extracting Node.js...', progress: 68);
       onProgress(const SetupState(
         step: SetupStep.downloadingNode,
@@ -168,12 +159,10 @@ class BootstrapService {
         message: 'Extracting Node.js...',
       ));
       await NativeBridge.extractNodeTarball(nodeTarPath);
-      // Patch @npmcli/git: which.js (git stub) + clone.js (stub for git-URL deps)
       await NativeBridge.patchNpmGit();
-      // Write package.json in filesDir with npm overrides: libsignal git URL → local tarball
       await NativeBridge.writeNpmOverrides();
 
-      // Step 3: Install OpenClaw (75-98%)
+      // Step 3: Install OpenClaw (75-95%)
       _updateSetupNotification('Installing OpenClaw...', progress: 75);
       onProgress(const SetupState(
         step: SetupStep.installingOpenClaw,
@@ -181,10 +170,7 @@ class BootstrapService {
         message: 'Installing OpenClaw (this may take a few minutes)...',
       ));
 
-      final npmCli =
-          '$filesDir/node/lib/node_modules/npm/bin/npm-cli.js';
-      // Use runNodeBootstrap — no NODE_OPTIONS, glibc-compat.js copied after
-      // Try up to 3 times — heap corruption (exit 134) is non-deterministic on some devices
+      final npmCli = '$filesDir/node/lib/node_modules/npm/bin/npm-cli.js';
       Exception? lastNpmErr;
       for (int attempt = 1; attempt <= 3; attempt++) {
         try {
@@ -212,134 +198,39 @@ class BootstrapService {
         throw Exception('npm install failed after 3 attempts: $lastNpmErr');
       }
 
-      _updateSetupNotification('Verifying OpenClaw...', progress: 95);
+      _updateSetupNotification('Verifying OpenClaw...', progress: 92);
       onProgress(const SetupState(
         step: SetupStep.installingOpenClaw,
         progress: 0.9,
         message: 'Verifying OpenClaw...',
       ));
-
-      // Verify node runs (bootstrap env)
       await NativeBridge.runNodeBootstrap(['--version']);
 
-      // Activate sharp prebuilt binary (downloads @img/sharp-linux-arm64, no compilation)
-      // sharp's install script checks for system libvips; if absent, uses bundled prebuilt.
-      _updateSetupNotification('Activating native modules...', progress: 97);
+      // Activate sharp prebuilt
+      _updateSetupNotification('Activating native modules...', progress: 95);
       onProgress(const SetupState(
         step: SetupStep.installingOpenClaw,
         progress: 0.95,
         message: 'Activating native modules (sharp)...',
       ));
       try {
-        final npmCli = '$filesDir/node/lib/node_modules/npm/bin/npm-cli.js';
         await NativeBridge.runNodeBootstrap([
           npmCli, 'rebuild',
           '--prefix', '$filesDir/node',
           'sharp',
           '--loglevel=error',
         ]);
-      } catch (_) {
-        // Non-fatal — gateway works without sharp (image processing only)
-      }
+      } catch (_) {}
+
+      // Mark core bootstrap done
+      await NativeBridge.markBootstrapDone();
 
       onProgress(const SetupState(
         step: SetupStep.installingOpenClaw,
         progress: 1.0,
-        message: 'OpenClaw installed',
+        message: 'Core setup complete',
       ));
 
-      // Step 4: Download + install Python 3.13 (82-92%)
-      _updateSetupNotification('Downloading Python ${AppConstants.pythonVersion}...', progress: 82);
-      onProgress(const SetupState(
-        step: SetupStep.installingPython,
-        progress: 0.0,
-        message: 'Downloading Python ${AppConstants.pythonVersion}...',
-      ));
-
-      final pythonTarPath = '$filesDir/tmp/python.tar.gz';
-      await _dio.download(
-        AppConstants.pythonUrl,
-        pythonTarPath,
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final progress = received / total;
-            final mb = (received / 1024 / 1024).toStringAsFixed(1);
-            final totalMb = (total / 1024 / 1024).toStringAsFixed(1);
-            _updateSetupNotification('Downloading Python: $mb / $totalMb MB', progress: 82 + (progress * 5).round());
-            onProgress(SetupState(
-              step: SetupStep.installingPython,
-              progress: progress * 0.6,
-              message: 'Downloading Python: $mb MB / $totalMb MB',
-            ));
-          }
-        },
-      );
-
-      _updateSetupNotification('Extracting Python...', progress: 88);
-      onProgress(const SetupState(
-        step: SetupStep.installingPython,
-        progress: 0.7,
-        message: 'Extracting Python...',
-      ));
-      await NativeBridge.extractPythonTarball(pythonTarPath);
-
-      onProgress(const SetupState(
-        step: SetupStep.installingPython,
-        progress: 1.0,
-        message: 'Python installed',
-      ));
-
-      // Step 5: Download + install Go (92-99%)
-      _updateSetupNotification('Downloading Go ${AppConstants.goVersion}...', progress: 92);
-      onProgress(const SetupState(
-        step: SetupStep.installingGo,
-        progress: 0.0,
-        message: 'Downloading Go ${AppConstants.goVersion}...',
-      ));
-
-      final goTarPath = '$filesDir/tmp/go.tar.gz';
-      await _dio.download(
-        AppConstants.goUrl,
-        goTarPath,
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final progress = received / total;
-            final mb = (received / 1024 / 1024).toStringAsFixed(1);
-            final totalMb = (total / 1024 / 1024).toStringAsFixed(1);
-            _updateSetupNotification('Downloading Go: $mb / $totalMb MB', progress: 92 + (progress * 5).round());
-            onProgress(SetupState(
-              step: SetupStep.installingGo,
-              progress: progress * 0.6,
-              message: 'Downloading Go: $mb MB / $totalMb MB',
-            ));
-          }
-        },
-      );
-
-      _updateSetupNotification('Extracting Go...', progress: 97);
-      onProgress(const SetupState(
-        step: SetupStep.installingGo,
-        progress: 0.7,
-        message: 'Extracting Go...',
-      ));
-      await NativeBridge.extractGoTarball(goTarPath);
-
-      onProgress(const SetupState(
-        step: SetupStep.installingGo,
-        progress: 1.0,
-        message: 'Go installed',
-      ));
-
-      // Mark bootstrap complete
-      await NativeBridge.markBootstrapDone();
-
-      _updateSetupNotification('Setup complete!', progress: 100);
-      _stopSetupService();
-      onProgress(const SetupState(
-        step: SetupStep.complete,
-        progress: 1.0,
-        message: 'Setup complete! Ready to start the gateway.',
-      ));
     } on DioException catch (e) {
       _stopSetupService();
       onProgress(SetupState(
@@ -353,5 +244,213 @@ class BootstrapService {
         error: 'Setup failed: $e',
       ));
     }
+  }
+
+  /// Install selected optional packages.
+  Future<void> installPackages({
+    required List<OptionalPackage> packages,
+    required void Function(SetupState) onProgress,
+  }) async {
+    final filesDir = await NativeBridge.getFilesDir();
+    final total = packages.length;
+
+    for (int i = 0; i < packages.length; i++) {
+      final pkg = packages[i];
+      final idx = i + 1;
+
+      // Skip if already installed
+      final installed = await PackageService.isInstalled(pkg);
+      if (installed) continue;
+
+      onProgress(SetupState(
+        step: SetupStep.installingPackages,
+        progress: i / total,
+        message: 'Installing ${pkg.name}...',
+        currentPackage: pkg.name,
+        totalPackages: total,
+        currentPackageIndex: idx,
+      ));
+      _updateSetupNotification(
+        'Installing ${pkg.name} ($idx/$total)...',
+        progress: 80 + ((i / total) * 18).round(),
+      );
+
+      try {
+        await _installSinglePackage(pkg, filesDir, (progress, message) {
+          onProgress(SetupState(
+            step: SetupStep.installingPackages,
+            progress: (i + progress) / total,
+            message: message,
+            currentPackage: pkg.name,
+            totalPackages: total,
+            currentPackageIndex: idx,
+          ));
+        });
+
+        await NativeBridge.markPackageDone(pkg.doneMarker);
+      } catch (e) {
+        // Non-fatal — continue with other packages
+        onProgress(SetupState(
+          step: SetupStep.installingPackages,
+          progress: (i + 1) / total,
+          message: '${pkg.name} failed: $e — continuing...',
+          currentPackage: pkg.name,
+          totalPackages: total,
+          currentPackageIndex: idx,
+        ));
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+
+    // Reinstall wrappers to pick up new binaries
+    try { await NativeBridge.installWrappers(); } catch (_) {}
+
+    _updateSetupNotification('Setup complete!', progress: 100);
+    _stopSetupService();
+
+    onProgress(const SetupState(
+      step: SetupStep.complete,
+      progress: 1.0,
+      message: 'Setup complete! Ready to start the gateway.',
+    ));
+  }
+
+  /// Install a single optional package.
+  Future<void> _installSinglePackage(
+    OptionalPackage pkg,
+    String filesDir,
+    void Function(double progress, String message) onProgress,
+  ) async {
+    final tmpDir = '$filesDir/tmp';
+    final downloadUrl = _getDownloadUrl(pkg);
+
+    switch (pkg.installMethod) {
+      case PackageInstallMethod.tarGz:
+        final tarPath = '$tmpDir/${pkg.id}.tar.gz';
+        onProgress(0.0, 'Downloading ${pkg.name}...');
+
+        await _dio.download(
+          downloadUrl,
+          tarPath,
+          onReceiveProgress: (received, total) {
+            if (total > 0) {
+              final progress = received / total * 0.6;
+              final mb = (received / 1024 / 1024).toStringAsFixed(1);
+              onProgress(progress, 'Downloading ${pkg.name}: $mb MB');
+            }
+          },
+        );
+
+        onProgress(0.7, 'Extracting ${pkg.name}...');
+        if (pkg.extractMethod == 'extractPythonTarball') {
+          await NativeBridge.extractPythonTarball(tarPath);
+        } else if (pkg.extractMethod == 'extractGoTarball') {
+          await NativeBridge.extractGoTarball(tarPath);
+        }
+        break;
+
+      case PackageInstallMethod.termuxDeb:
+        final debPath = '$tmpDir/${pkg.id}.deb';
+        onProgress(0.0, 'Downloading ${pkg.name}...');
+
+        await _dio.download(
+          downloadUrl,
+          debPath,
+          onReceiveProgress: (received, total) {
+            if (total > 0) {
+              final progress = received / total * 0.6;
+              onProgress(progress, 'Downloading ${pkg.name}...');
+            }
+          },
+        );
+
+        onProgress(0.7, 'Installing ${pkg.name}...');
+        await NativeBridge.installTermuxDeb(debPath);
+        break;
+
+      case PackageInstallMethod.staticBinary:
+        final binPath = '$tmpDir/${pkg.id}_binary';
+        onProgress(0.0, 'Downloading ${pkg.name}...');
+
+        await _dio.download(
+          downloadUrl,
+          binPath,
+          onReceiveProgress: (received, total) {
+            if (total > 0) {
+              final progress = received / total * 0.6;
+              onProgress(progress, 'Downloading ${pkg.name}...');
+            }
+          },
+        );
+
+        onProgress(0.7, 'Installing ${pkg.name}...');
+        await NativeBridge.installStaticBinary(
+          binPath,
+          pkg.binaryDestPath ?? 'bin/${pkg.id}',
+          installApplets: pkg.installApplets,
+        );
+        try { File(binPath).deleteSync(); } catch (_) {}
+        break;
+
+      case PackageInstallMethod.termuxDebBundle:
+        // Download all URLs and extract each
+        final urls = pkg.downloadUrls ?? [downloadUrl];
+        for (int j = 0; j < urls.length; j++) {
+          final debPath = '$tmpDir/${pkg.id}_$j.deb';
+          final urlProgress = j / urls.length;
+          onProgress(urlProgress * 0.6, 'Downloading ${pkg.name} (${j + 1}/${urls.length})...');
+
+          await _dio.download(urls[j], debPath);
+          await NativeBridge.installTermuxDeb(debPath);
+        }
+        break;
+    }
+
+    onProgress(1.0, '${pkg.name} installed');
+  }
+
+  /// Resolve the download URL for a package (some use AppConstants).
+  String _getDownloadUrl(OptionalPackage pkg) {
+    if (pkg.downloadUrl != null) return pkg.downloadUrl!;
+
+    switch (pkg.id) {
+      case 'python':
+        return AppConstants.pythonUrl;
+      case 'go':
+        return AppConstants.goUrl;
+      case 'busybox':
+        return AppConstants.busyboxUrl;
+      case 'git':
+        return AppConstants.gitDebUrl;
+      case 'make':
+        return AppConstants.makeDebUrl;
+      default:
+        throw Exception('No download URL for package ${pkg.id}');
+    }
+  }
+
+  // ── Legacy compatibility ──────────────────────────────────
+
+  /// Full setup (core + all default packages). Called by SetupProvider.
+  Future<void> runFullSetup({
+    required void Function(SetupState) onProgress,
+  }) async {
+    await runCoreSetup(onProgress: onProgress);
+
+    // If core failed, don't install packages
+    // (the onProgress callback will have set error state)
+    // Check if core completed by looking at the marker
+    final filesDir = await NativeBridge.getFilesDir();
+    if (!File('$filesDir/.bootstrap-done').existsSync()) return;
+
+    // Install all default-enabled packages
+    final defaultPackages = OptionalPackage.all
+        .where((p) => p.defaultEnabled)
+        .toList();
+
+    await installPackages(
+      packages: defaultPackages,
+      onProgress: onProgress,
+    );
   }
 }

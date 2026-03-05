@@ -38,8 +38,6 @@ class BootstrapManager(
             && ldSo.exists()
             && File("$nodeDir/bin/node").exists()
             && File("$nodeDir/bin/openclaw").exists()
-            && File("$filesDir/.python-done").exists()
-            && File("$filesDir/.go-done").exists()
     }
 
     fun isPythonInstalled(): Boolean = File("$filesDir/.python-done").exists()
@@ -396,6 +394,61 @@ module.exports = (opts = {}) => {
 
     fun markBootstrapDone() {
         File("$filesDir/.bootstrap-done").writeText("ok")
+    }
+
+    // ── Optional package installers ──────────────────────────────
+
+    /** Install a static binary into filesDir/bin/ and optionally create busybox applet symlinks */
+    fun installStaticBinary(binaryPath: String, destRelPath: String, installApplets: Boolean = false) {
+        val binDir = File("$filesDir/bin")
+        binDir.mkdirs()
+        val dest = File("$filesDir/$destRelPath")
+        dest.parentFile?.mkdirs()
+        File(binaryPath).copyTo(dest, overwrite = true)
+        dest.setExecutable(true, false)
+        dest.setReadable(true, false)
+
+        if (installApplets) {
+            // Run busybox --list to get applet names, create symlinks
+            try {
+                val pb = ProcessBuilder(listOf(dest.absolutePath, "--list"))
+                pb.redirectErrorStream(true)
+                val proc = pb.start()
+                val applets = proc.inputStream.bufferedReader().readText().trim().split("\n")
+                proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+                for (applet in applets) {
+                    val name = applet.trim()
+                    if (name.isEmpty()) continue
+                    val link = File(binDir, name)
+                    if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) continue
+                    try { android.system.Os.symlink(dest.absolutePath, link.absolutePath) }
+                    catch (_: Exception) {}
+                }
+                android.util.Log.i("OpenclawGW", "Busybox installed: ${applets.size} applets")
+            } catch (e: Exception) {
+                android.util.Log.w("OpenclawGW", "Busybox applet install failed: ${e.message}")
+            }
+        }
+
+        android.util.Log.i("OpenclawGW", "Static binary installed: $destRelPath")
+    }
+
+    /** Extract a Termux glibc .deb into the glibc dir (reuses extractGlibcDeb logic) */
+    fun installTermuxDeb(debPath: String) {
+        extractGlibcDeb(debPath)
+        File(debPath).delete()
+        android.util.Log.i("OpenclawGW", "Termux deb installed: $debPath")
+    }
+
+    /** Write a done-marker for an optional package */
+    fun markPackageDone(markerId: String) {
+        File("$filesDir/$markerId").writeText("ok")
+    }
+
+    /** Check if an optional package is installed */
+    fun isPackageInstalled(checkPath: String, doneMarker: String): Boolean {
+        return File("$filesDir/$doneMarker").exists()
+            && File("$filesDir/$checkPath").exists()
     }
 
     /**

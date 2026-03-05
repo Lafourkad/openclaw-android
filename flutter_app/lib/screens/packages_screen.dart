@@ -87,7 +87,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 Text(
-                  'Development tools you can install inside the Ubuntu environment.',
+                  'Development tools you can install inside the native glibc environment.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),

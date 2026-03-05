@@ -22,6 +22,8 @@ class GlibcRunner(
      * which is noexec on GrapheneOS. These wrappers allow any subprocess or shell to
      * invoke `node`, `npm`, `openclaw` via execve — not just our PTY shell functions.
      */
+    val binDir    = "$filesDir/bin"
+
     fun installWrappers() {
         val wrapperDir = "/data/local/tmp"
         val wrapperContent = mapOf(
@@ -54,6 +56,18 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/go" "$@"
 """,
             "gofmt" to """#!/system/bin/sh
 exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
+""",
+            "git" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$glibcDir/bin/git" "$@"
+""",
+            "make" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$glibcDir/bin/make" "$@"
+""",
+            "curl" to """#!/system/bin/sh
+exec "$ldSo" --library-path "$glibcDir/lib" "$glibcDir/bin/curl" "$@"
+""",
+            "busybox" to """#!/system/bin/sh
+exec "$binDir/busybox" "$@"
 """
         )
         for ((name, content) in wrapperContent) {
@@ -82,7 +96,7 @@ exec "$ldSo" --library-path "$glibcDir/lib" "$goDir/bin/gofmt" "$@"
         "GOROOT"              to goDir,
         "GOPATH"              to "$filesDir/gopath",
         "GOCACHE"             to "$filesDir/tmp/go-cache",
-        "PATH"                to "/data/local/tmp:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$filesDir/gopath/bin:/system/bin",
+        "PATH"                to "/data/local/tmp:$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
     )
 
     /** Bootstrap env — no NODE_OPTIONS, glibc-compat.js not yet in place */

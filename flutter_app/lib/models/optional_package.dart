@@ -1,22 +1,49 @@
 import 'package:flutter/material.dart';
 
+/// Installation method for optional packages.
+enum PackageInstallMethod {
+  /// Download a tar.gz and extract via NativeBridge (Python, Go)
+  tarGz,
+  /// Download a Termux glibc .deb and extract via extractGlibcDeb (Make)
+  termuxDeb,
+  /// Download a single static binary (Busybox)
+  staticBinary,
+  /// Download multiple Termux glibc .debs and extract all (Git)
+  termuxDebBundle,
+}
+
 /// Metadata for an optional development tool that can be installed
-/// inside the proot Ubuntu environment.
+/// inside the glibc native environment.
 class OptionalPackage {
   final String id;
   final String name;
   final String description;
   final IconData icon;
   final Color color;
-  final String installCommand;
-  final String uninstallCommand;
-
-  /// Path relative to rootfs dir to check if installed.
-  final String checkPath;
   final String estimatedSize;
+  final bool defaultEnabled;
 
-  /// Pattern printed to stdout when installation finishes successfully.
-  final String completionSentinel;
+  /// Installation method
+  final PackageInstallMethod installMethod;
+
+  /// Download URL (single file) or list of URLs (bundle)
+  final String? downloadUrl;
+  final List<String>? downloadUrls;
+
+  /// Path to check if installed (relative to filesDir)
+  final String checkPath;
+
+  /// Marker file (relative to filesDir) written on completion
+  final String doneMarker;
+
+  /// NativeBridge extract method name
+  final String? extractMethod;
+
+  /// For static binaries: where to place them (relative to filesDir)
+  final String? binaryDestPath;
+
+  /// Applets to symlink (busybox)
+  final bool installApplets;
 
   const OptionalPackage({
     required this.id,
@@ -24,93 +51,103 @@ class OptionalPackage {
     required this.description,
     required this.icon,
     required this.color,
-    required this.installCommand,
-    required this.uninstallCommand,
-    required this.checkPath,
     required this.estimatedSize,
-    required this.completionSentinel,
+    required this.checkPath,
+    required this.doneMarker,
+    this.defaultEnabled = true,
+    this.installMethod = PackageInstallMethod.tarGz,
+    this.downloadUrl,
+    this.downloadUrls,
+    this.extractMethod,
+    this.binaryDestPath,
+    this.installApplets = false,
   });
+
+  // ──────────────────────────────────────────────
+  // Package definitions
+  // ──────────────────────────────────────────────
+
+  static const pythonPackage = OptionalPackage(
+    id: 'python',
+    name: 'Python 3.13',
+    description: 'Python interpreter — scripts, scraping, ML, data processing',
+    icon: Icons.code,
+    color: Colors.blue,
+    estimatedSize: '~75 MB',
+    defaultEnabled: true,
+    installMethod: PackageInstallMethod.tarGz,
+    downloadUrl: null, // Set from AppConstants at runtime
+    extractMethod: 'extractPythonTarball',
+    checkPath: 'python/bin/python3',
+    doneMarker: '.python-done',
+  );
 
   static const goPackage = OptionalPackage(
     id: 'go',
-    name: 'Go (Golang)',
-    description: 'Go programming language compiler and tools',
+    name: 'Go 1.26',
+    description: 'Go compiler and tools — fast compiled programs',
     icon: Icons.integration_instructions,
     color: Colors.cyan,
-    installCommand:
-        'set -e; '
-        'echo ">>> Installing Go via apt..."; '
-        'apt-get update -qq && apt-get install -y golang; '
-        'go version; '
-        'echo ">>> GO_INSTALL_COMPLETE"',
-    uninstallCommand:
-        'set -e; '
-        'echo ">>> Removing Go..."; '
-        'apt-get remove -y golang golang-go && apt-get autoremove -y; '
-        'echo ">>> GO_UNINSTALL_COMPLETE"',
-    checkPath: 'usr/bin/go',
-    estimatedSize: '~150 MB',
-    completionSentinel: 'GO_INSTALL_COMPLETE',
+    estimatedSize: '~70 MB',
+    defaultEnabled: true,
+    installMethod: PackageInstallMethod.tarGz,
+    downloadUrl: null, // Set from AppConstants at runtime
+    extractMethod: 'extractGoTarball',
+    checkPath: 'go/bin/go',
+    doneMarker: '.go-done',
   );
 
-  static const brewPackage = OptionalPackage(
-    id: 'brew',
-    name: 'Homebrew',
-    description: 'The missing package manager for Linux',
-    icon: Icons.science,
-    color: Colors.amber,
-    installCommand:
-        'set -e; '
-        'echo ">>> Installing Homebrew (this may take a while)..."; '
-        'touch /.dockerenv; '
-        'apt-get update -qq && apt-get install -y -qq '
-        'build-essential procps curl file git; '
-        'NONINTERACTIVE=1 /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; '
-        r"grep -q 'linuxbrew' /root/.bashrc 2>/dev/null || {"
-        ' echo \'eval "\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"\' >> /root/.bashrc; '
-        '}; '
-        'eval "\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; '
-        'brew --version; '
-        'echo ">>> BREW_INSTALL_COMPLETE"',
-    uninstallCommand:
-        'set -e; '
-        'echo ">>> Removing Homebrew..."; '
-        'touch /.dockerenv; '
-        'NONINTERACTIVE=1 /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" || true; '
-        'rm -rf /home/linuxbrew/.linuxbrew; '
-        r"sed -i '/linuxbrew/d' /root/.bashrc; "
-        'echo ">>> BREW_UNINSTALL_COMPLETE"',
-    checkPath: 'home/linuxbrew/.linuxbrew/bin/brew',
-    estimatedSize: '~500 MB',
-    completionSentinel: 'BREW_INSTALL_COMPLETE',
+  static const busyboxPackage = OptionalPackage(
+    id: 'busybox',
+    name: 'Busybox',
+    description: '300+ Unix commands in one binary — ls, grep, sed, awk, find, tar...',
+    icon: Icons.terminal,
+    color: Colors.orange,
+    estimatedSize: '~2 MB',
+    defaultEnabled: true,
+    installMethod: PackageInstallMethod.staticBinary,
+    downloadUrl: null, // Set from AppConstants at runtime
+    binaryDestPath: 'bin/busybox',
+    installApplets: true,
+    checkPath: 'bin/busybox',
+    doneMarker: '.busybox-done',
   );
 
-  static const sshPackage = OptionalPackage(
-    id: 'ssh',
-    name: 'OpenSSH',
-    description: 'SSH client and server for secure remote access',
-    icon: Icons.vpn_key,
-    color: Colors.teal,
-    installCommand:
-        'set -e; '
-        'echo ">>> Installing OpenSSH..."; '
-        'apt-get update -qq && apt-get install -y openssh-client openssh-server; '
-        'ssh -V; '
-        'echo ">>> SSH_INSTALL_COMPLETE"',
-    uninstallCommand:
-        'set -e; '
-        'echo ">>> Removing OpenSSH..."; '
-        'apt-get remove -y openssh-client openssh-server && apt-get autoremove -y; '
-        'echo ">>> SSH_UNINSTALL_COMPLETE"',
-    checkPath: 'usr/bin/ssh',
-    estimatedSize: '~10 MB',
-    completionSentinel: 'SSH_INSTALL_COMPLETE',
+  static const gitPackage = OptionalPackage(
+    id: 'git',
+    name: 'Git',
+    description: 'Version control — clone repos, manage code, install skills',
+    icon: Icons.merge_type,
+    color: Colors.deepOrange,
+    estimatedSize: '~45 MB',
+    defaultEnabled: true,
+    installMethod: PackageInstallMethod.termuxDeb,
+    downloadUrl: null, // Set from AppConstants at runtime
+    checkPath: 'glibc/bin/git',
+    doneMarker: '.git-done',
   );
 
-  /// All available optional packages.
-  static const all = [goPackage, brewPackage, sshPackage];
+  static const makePackage = OptionalPackage(
+    id: 'make',
+    name: 'Make',
+    description: 'Build automation tool — compile native npm modules',
+    icon: Icons.build,
+    color: Colors.green,
+    estimatedSize: '~1 MB',
+    defaultEnabled: true,
+    installMethod: PackageInstallMethod.termuxDeb,
+    downloadUrl:
+        'https://packages-cf.termux.dev/apt/termux-glibc/pool/stable/m/make-glibc/make-glibc_4.4.1_aarch64.deb',
+    checkPath: 'glibc/bin/make',
+    doneMarker: '.make-done',
+  );
 
-  /// Sentinel for uninstall completion (derived from install sentinel).
-  String get uninstallSentinel =>
-      completionSentinel.replaceFirst('INSTALL', 'UNINSTALL');
+  /// All available optional packages, in recommended install order.
+  static const all = [
+    pythonPackage,
+    goPackage,
+    busyboxPackage,
+    gitPackage,
+    makePackage,
+  ];
 }
