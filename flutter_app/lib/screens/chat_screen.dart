@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app.dart';
 import '../services/native_bridge.dart';
+import 'dashboard_screen.dart';
 
 /// Chat with the OpenClaw agent via HTTP /v1/chat/completions (SSE streaming).
 /// Full agent pipeline — SOUL.md, tools, memory, skills all active.
@@ -268,6 +269,75 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Widget _buildDrawer(bool isDark) {
+    return Drawer(
+      backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+      child: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E2C3A) : AppColors.accent.withOpacity(0.1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const CircleAvatar(
+                    radius: 24,
+                    backgroundColor: Colors.white24,
+                    child: Text('🦞', style: TextStyle(fontSize: 24)),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('OpenClaw',
+                    style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                  Text('AI Gateway',
+                    style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.black45),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dashboard),
+              title: const Text('Dashboard'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('New Chat'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _messages.clear());
+                _saveHistory();
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 50), () {
       if (_scrollController.hasClients) {
@@ -311,33 +381,45 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         backgroundColor: isDark ? const Color(0xFF17212B) : AppColors.accent,
         foregroundColor: Colors.white,
-        title: Row(
-          children: [
-            const CircleAvatar(
-              radius: 16,
-              backgroundColor: Colors.white24,
-              child: Text('🦞', style: TextStyle(fontSize: 16)),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'OpenClaw',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  _sending ? 'typing...' : 'online',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-                ),
-              ],
-            ),
-          ],
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+        title: GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const DashboardScreen()),
+          ),
+          child: Row(
+            children: [
+              const CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.white24,
+                child: Text('🦞', style: TextStyle(fontSize: 16)),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'OpenClaw',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    _sending ? 'typing...' : 'online',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
         actions: [
           IconButton(icon: const Icon(Icons.delete_sweep), onPressed: _clearChat),
         ],
       ),
+      drawer: _buildDrawer(isDark),
       body: Column(
         children: [
           // Messages

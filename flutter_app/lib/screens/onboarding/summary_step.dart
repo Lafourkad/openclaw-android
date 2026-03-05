@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app.dart';
 import '../../services/config_generator.dart';
 import '../../services/native_bridge.dart';
-import '../dashboard_screen.dart';
+import '../chat_screen.dart';
 
 class SummaryStep extends StatefulWidget {
   final OnboardingConfig config;
@@ -54,7 +54,7 @@ class _SummaryStepState extends State<SummaryStep> {
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+          MaterialPageRoute(builder: (_) => const ChatScreen()),
           (route) => false,
         );
       }

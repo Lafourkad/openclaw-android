@@ -6,6 +6,7 @@ import '../services/native_bridge.dart';
 import '../services/preferences_service.dart';
 import 'setup_wizard_screen.dart';
 import 'onboarding_screen.dart';
+import 'chat_screen.dart';
 import 'dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -78,7 +79,7 @@ class _SplashScreenState extends State<SplashScreen>
         }
 
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+          MaterialPageRoute(builder: (_) => const ChatScreen()),
         );
       } else {
         Navigator.of(context).pushReplacement(
