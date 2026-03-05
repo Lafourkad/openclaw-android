@@ -6,6 +6,13 @@ import 'package:flutter/services.dart';
 import '../app.dart';
 import '../services/native_bridge.dart';
 import 'dashboard_screen.dart';
+import 'file_browser_screen.dart';
+import 'packages_screen.dart';
+import 'doctor_screen.dart';
+import 'logs_screen.dart';
+import 'backup_screen.dart';
+import 'agents_screen.dart';
+import 'settings/settings_main_screen.dart';
 
 /// Chat with the OpenClaw agent via HTTP /v1/chat/completions (SSE streaming).
 /// Full agent pipeline — SOUL.md, tools, memory, skills all active.
@@ -49,6 +56,29 @@ class _ChatScreenState extends State<ChatScreen> {
     _filesDir = await NativeBridge.getFilesDir();
     await _loadConfig();
     await _loadHistory();
+    await _ensureGatewayRunning();
+  }
+
+  /// Start gateway if not already running.
+  Future<void> _ensureGatewayRunning() async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(
+        Uri.parse('http://127.0.0.1:$_port/__openclaw/control-ui-config.json'),
+      );
+      final response = await request.close().timeout(const Duration(seconds: 3));
+      await response.drain();
+      client.close();
+      // Gateway is running
+    } catch (_) {
+      // Gateway not running — start it
+      try {
+        await NativeBridge.startGateway();
+        // Wait for it to boot
+        await Future.delayed(const Duration(seconds: 3));
+      } catch (_) {}
+    }
   }
 
   Future<void> _loadConfig() async {
@@ -270,6 +300,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildDrawer(bool isDark) {
+    void _nav(Widget screen) {
+      Navigator.pop(context);
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    }
+
     return Drawer(
       backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
       child: SafeArea(
@@ -296,21 +331,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
-                  Text('AI Gateway',
+                  Text('AI Gateway for Android',
                     style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.black45),
                   ),
                 ],
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.dashboard),
-              title: const Text('Dashboard'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
-                );
-              },
             ),
             ListTile(
               leading: const Icon(Icons.chat_bubble_outline),
@@ -321,16 +346,47 @@ class _ChatScreenState extends State<ChatScreen> {
                 _saveHistory();
               },
             ),
-            const Divider(),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.dashboard),
+              title: const Text('Dashboard'),
+              onTap: () => _nav(const DashboardScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.people_outline),
+              title: const Text('Agents'),
+              onTap: () => _nav(const AgentsScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Files'),
+              onTap: () => _nav(const FileBrowserScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.extension_outlined),
+              title: const Text('Packages'),
+              onTap: () => _nav(const PackagesScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.medical_services_outlined),
+              title: const Text('Doctor'),
+              onTap: () => _nav(const DoctorScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.article_outlined),
+              title: const Text('Logs'),
+              onTap: () => _nav(const LogsScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.backup_outlined),
+              title: const Text('Backup'),
+              onTap: () => _nav(const BackupScreen()),
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const DashboardScreen()),
-                );
-              },
+              onTap: () => _nav(const SettingsMainScreen()),
             ),
           ],
         ),
