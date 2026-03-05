@@ -70,11 +70,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _port = config['gateway']?['port'] as int? ?? 18789;
 
         bool changed = false;
+        config.putIfAbsent('gateway', () => <String, dynamic>{});
+        final gw = config['gateway'] as Map<String, dynamic>;
 
         // Auto-generate token if missing
         if (_gatewayToken == null || _gatewayToken!.isEmpty) {
-          config.putIfAbsent('gateway', () => <String, dynamic>{});
-          final gw = config['gateway'] as Map<String, dynamic>;
           gw['auth'] = {
             'mode': 'token',
             'token': 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}',
@@ -84,22 +84,14 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         // Ensure controlUi is enabled with device auth disabled (for in-app WS chat)
-        final gw = config['gateway'] as Map<String, dynamic>? ?? {};
-        config['gateway'] = gw;
-        final controlUi = gw['controlUi'] as Map<String, dynamic>? ?? {};
+        if (gw['controlUi'] == null) gw['controlUi'] = <String, dynamic>{};
+        final controlUi = gw['controlUi'] as Map<String, dynamic>;
         if (controlUi['enabled'] != true ||
             controlUi['dangerouslyDisableDeviceAuth'] != true ||
             controlUi['allowInsecureAuth'] != true) {
-          gw['controlUi'] = {
-            'enabled': true,
-            'dangerouslyDisableDeviceAuth': true,
-            'allowInsecureAuth': true,
-            ...controlUi, // preserve user overrides
-            // Force these even if user set them differently
-            'enabled': true,
-            'dangerouslyDisableDeviceAuth': true,
-            'allowInsecureAuth': true,
-          };
+          controlUi['enabled'] = true;
+          controlUi['dangerouslyDisableDeviceAuth'] = true;
+          controlUi['allowInsecureAuth'] = true;
           changed = true;
         }
 
