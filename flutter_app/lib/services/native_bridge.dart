@@ -74,6 +74,10 @@ class NativeBridge {
     return await _channel.invokeMethod('extractGoTarball', {'tarPath': tarPath});
   }
 
+  static Future<bool> extractGitBundle(String tarPath) async {
+    return await _channel.invokeMethod('extractGitBundle', {'tarPath': tarPath});
+  }
+
   static Future<void> markBootstrapDone() async {
     await _channel.invokeMethod('markBootstrapDone');
   }

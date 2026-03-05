@@ -115,15 +115,16 @@ class OptionalPackage {
 
   static const gitPackage = OptionalPackage(
     id: 'git',
-    name: 'Git',
+    name: 'Git 2.52',
     description: 'Version control — clone repos, manage code, install skills',
     icon: Icons.merge_type,
     color: Colors.deepOrange,
-    estimatedSize: '~45 MB',
+    estimatedSize: '~7 MB',
     defaultEnabled: true,
-    installMethod: PackageInstallMethod.termuxDeb,
+    installMethod: PackageInstallMethod.tarGz,
     downloadUrl: null, // Set from AppConstants at runtime
-    checkPath: 'glibc/bin/git',
+    extractMethod: 'extractGitBundle',
+    checkPath: 'git/git',
     doneMarker: '.git-done',
   );
 

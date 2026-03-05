@@ -392,6 +392,31 @@ module.exports = (opts = {}) => {
         android.util.Log.i("OpenclawGW", "Go installed: $goDir")
     }
 
+    fun extractGitBundle(tarPath: String) {
+        val destDir = File("$filesDir/git")
+        if (destDir.exists()) destDir.deleteRecursively()
+        // git-aarch64-musl.tar.gz contains git/ at root
+        extractTarGz(tarPath, File(filesDir), stripCount = 0)
+        // Make binaries executable
+        File("$destDir/git").setExecutable(true, false)
+        File("$destDir/git-remote-http").setExecutable(true, false)
+        File("$destDir/git-remote-https").setExecutable(true, false)
+        File("$destDir/lib/ld-musl-aarch64.so.1").setExecutable(true, false)
+        // Create wrapper script in bin/ that sets LD_LIBRARY_PATH
+        val binDir = File("$filesDir/bin")
+        binDir.mkdirs()
+        val wrapper = File("$binDir/git")
+        wrapper.writeText("""#!/bin/sh
+export GIT_EXEC_PATH="$filesDir/git"
+export SSL_CERT_FILE="$filesDir/git/ssl/cert.pem"
+exec "$filesDir/git/lib/ld-musl-aarch64.so.1" --library-path "$filesDir/git/lib" "$filesDir/git/git" "${'$'}@"
+""")
+        wrapper.setExecutable(true, false)
+        File(tarPath).delete()
+        File("$filesDir/.git-done").writeText("ok")
+        android.util.Log.i("OpenclawGW", "Git installed: $destDir")
+    }
+
     fun markBootstrapDone() {
         File("$filesDir/.bootstrap-done").writeText("ok")
     }

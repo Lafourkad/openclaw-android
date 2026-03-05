@@ -247,6 +247,21 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGS", "tarPath required", null)
                     }
                 }
+                "extractGitBundle" -> {
+                    val tarPath = call.argument<String>("tarPath")
+                    if (tarPath != null) {
+                        Thread {
+                            try {
+                                bootstrapManager.extractGitBundle(tarPath)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("GIT_EXTRACT_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    } else {
+                        result.error("INVALID_ARGS", "tarPath required", null)
+                    }
+                }
                 "markBootstrapDone" -> {
                     try {
                         bootstrapManager.markBootstrapDone()

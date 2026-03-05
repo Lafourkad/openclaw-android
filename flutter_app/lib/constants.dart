@@ -59,14 +59,13 @@ class AppConstants {
   static const String goUrl =
       'https://go.dev/dl/go1.26.0.linux-arm64.tar.gz';
 
-  // Busybox static binary (provides 300+ Unix commands)
-  // TODO: Host static aarch64 busybox on project GitHub releases
+  // Busybox 1.37.0 static binary (Alpine musl, 1.1 MB)
   static const String busyboxUrl =
-      'https://github.com/AidanPark/openclaw-android/releases/download/tools-v1/busybox-aarch64';
+      'https://github.com/Lafourkad/openclaw-android/releases/download/tools-v1/busybox-aarch64';
 
-  // Git (Termux glibc deb — depends only on glibc, ships static-linked)
-  static const String gitDebUrl =
-      'https://packages-cf.termux.dev/apt/termux-glibc/pool/stable/g/git-glibc/git-glibc_2.47.0_aarch64.deb';
+  // Git 2.52.0 + musl libs bundle (Alpine, 7 MB — includes HTTPS support)
+  static const String gitBundleUrl =
+      'https://github.com/Lafourkad/openclaw-android/releases/download/tools-v1/git-aarch64-musl.tar.gz';
 
   // Make (Termux glibc deb — depends only on glibc)
   static const String makeDebUrl =

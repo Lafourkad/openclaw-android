@@ -346,6 +346,8 @@ class BootstrapService {
           await NativeBridge.extractPythonTarball(tarPath);
         } else if (pkg.extractMethod == 'extractGoTarball') {
           await NativeBridge.extractGoTarball(tarPath);
+        } else if (pkg.extractMethod == 'extractGitBundle') {
+          await NativeBridge.extractGitBundle(tarPath);
         }
         break;
 
@@ -421,7 +423,7 @@ class BootstrapService {
       case 'busybox':
         return AppConstants.busyboxUrl;
       case 'git':
-        return AppConstants.gitDebUrl;
+        return AppConstants.gitBundleUrl;
       case 'make':
         return AppConstants.makeDebUrl;
       default:
