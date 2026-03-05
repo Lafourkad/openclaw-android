@@ -59,8 +59,10 @@ class GatewayWebSocket {
   }
 
   /// Send a JSON-RPC request and await the response.
-  Future<dynamic> request(String method, [Map<String, dynamic>? params]) {
-    if (_ws == null || !_connected) {
+  /// [_bypassConnCheck] is used only for the initial 'connect' handshake.
+  Future<dynamic> request(String method, [Map<String, dynamic>? params, bool _bypassConnCheck = false]) {
+    if (_ws == null) return Future.error('no websocket');
+    if (!_bypassConnCheck && !_connected) {
       return Future.error('not connected');
     }
 
@@ -241,7 +243,7 @@ class GatewayWebSocket {
       connectParams['auth'] = {'token': token};
     }
 
-    request('connect', connectParams).then((result) {
+    request('connect', connectParams, true).then((result) {
       _backoffMs = 800;
       _setConnected(true);
 
