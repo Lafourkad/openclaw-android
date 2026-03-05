@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../constants.dart';
 import '../services/native_bridge.dart';
 import '../services/preferences_service.dart';
 import 'setup_wizard_screen.dart';
+import 'onboarding_screen.dart';
 import 'dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -63,6 +65,18 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (setupComplete) {
         prefs.setupComplete = true;
+
+        // Check if onboarding (config) has been done
+        final filesDir = await NativeBridge.getFilesDir();
+        final configFile = File('$filesDir/.openclaw/openclaw.json');
+        if (!configFile.existsSync()) {
+          // Bootstrap done but no config — show onboarding wizard
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const OnboardingScreen(isFirstRun: true)),
+          );
+          return;
+        }
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const DashboardScreen()),
         );
