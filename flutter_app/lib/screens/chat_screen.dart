@@ -24,14 +24,26 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _filesDir;
   String _streamBuffer = '';
   int _port = 18789;
+  bool _showScrollFab = false;
+  int? _editingIndex; // Index of message being edited
+
+  bool _endpointChecked = false;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _init();
   }
 
-  bool _endpointChecked = false;
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final atBottom = _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 100;
+    if (_showScrollFab == atBottom) {
+      setState(() => _showScrollFab = !atBottom);
+    }
+  }
 
   Future<void> _init() async {
     _filesDir = await NativeBridge.getFilesDir();
@@ -252,6 +264,40 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Regenerate last assistant response.
+  Future<void> _regenerate() async {
+    if (_sending) return;
+    // Find last assistant message and remove it
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      if (!_messages[i].isUser) {
+        setState(() => _messages.removeAt(i));
+        break;
+      }
+    }
+    // Find last user message and resend
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      if (_messages[i].isUser) {
+        final text = _messages[i].text;
+        setState(() => _messages.removeAt(i));
+        _inputController.text = text;
+        await _send();
+        return;
+      }
+    }
+  }
+
+  /// Edit a user message and resend (removes all messages after it).
+  void _editMessage(int index) {
+    if (index >= _messages.length || !_messages[index].isUser) return;
+    final text = _messages[index].text;
+    // Remove this message and everything after
+    setState(() {
+      _messages.removeRange(index, _messages.length);
+    });
+    _inputController.text = text;
+    _saveHistory();
+  }
+
   void _clearChat() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -307,26 +353,52 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           // Messages
           Expanded(
-            child: _messages.isEmpty
-                ? Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.white10 : Colors.black12,
-                        borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              children: [
+                _messages.isEmpty
+                    ? Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: isDark ? Colors.white10 : Colors.black12,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            'Start a conversation',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final widgets = <Widget>[];
+
+                          // Date separator
+                          if (index == 0 || _needsDateSeparator(index)) {
+                            widgets.add(_buildDateSeparator(_messages[index].time));
+                          }
+
+                          widgets.add(_buildMessage(_messages[index], index));
+                          return Column(children: widgets);
+                        },
                       ),
-                      child: const Text(
-                        'Start a conversation',
-                        style: TextStyle(fontSize: 13),
-                      ),
+
+                // Scroll-to-bottom FAB
+                if (_showScrollFab)
+                  Positioned(
+                    right: 16,
+                    bottom: 8,
+                    child: FloatingActionButton.small(
+                      onPressed: _scrollToBottom,
+                      backgroundColor: isDark ? const Color(0xFF2B5278) : AppColors.accent,
+                      child: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
                     ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) => _buildMessage(_messages[index], index),
                   ),
+              ],
+            ),
           ),
 
           // Input bar
@@ -404,7 +476,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final isUser = msg.isUser;
-    final time = msg.time != null
+    final grouped = _isGrouped(index);
+    final time = msg.time != null && !grouped
         ? '${msg.time!.hour.toString().padLeft(2, '0')}:${msg.time!.minute.toString().padLeft(2, '0')}'
         : '';
 
@@ -427,7 +500,7 @@ class _ChatScreenState extends State<ChatScreen> {
             maxWidth: MediaQuery.of(context).size.width * 0.8,
           ),
           margin: EdgeInsets.only(
-            bottom: 4,
+            bottom: grouped ? 2 : 4,
             left: isUser ? 48 : 0,
             right: isUser ? 0 : 48,
           ),
@@ -461,18 +534,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 )
               else
                 _buildFormattedText(msg.text, textColor),
-              const SizedBox(height: 2),
-              // Time + status
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(time, style: TextStyle(fontSize: 11, color: timeColor)),
-                  if (isUser) ...[
-                    const SizedBox(width: 4),
-                    Icon(Icons.done_all, size: 14, color: timeColor),
+              if (time.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(time, style: TextStyle(fontSize: 11, color: timeColor)),
+                    if (isUser) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.done_all, size: 14, color: timeColor),
+                    ],
                   ],
-                ],
-              ),
+                ),
+              ],
             ],
           ),
         ),
@@ -534,17 +608,119 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    // Simple inline formatting
-    return SelectableText(
-      text,
-      style: TextStyle(fontSize: 14, color: defaultColor, height: 1.4),
+    // Inline formatting: **bold**, *italic*, `code`
+    return SelectableText.rich(
+      _parseInlineMarkdown(text, defaultColor),
     );
   }
 
+  TextSpan _parseInlineMarkdown(String text, Color defaultColor) {
+    final spans = <InlineSpan>[];
+    final baseStyle = TextStyle(fontSize: 14, color: defaultColor, height: 1.4);
+
+    // Pattern: **bold**, *italic*, `code`
+    final regex = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`');
+
+    int lastEnd = 0;
+    for (final match in regex.allMatches(text)) {
+      // Text before match
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, match.start), style: baseStyle));
+      }
+
+      if (match.group(1) != null) {
+        // **bold**
+        spans.add(TextSpan(
+          text: match.group(1),
+          style: baseStyle.copyWith(fontWeight: FontWeight.bold),
+        ));
+      } else if (match.group(2) != null) {
+        // *italic*
+        spans.add(TextSpan(
+          text: match.group(2),
+          style: baseStyle.copyWith(fontStyle: FontStyle.italic),
+        ));
+      } else if (match.group(3) != null) {
+        // `code`
+        spans.add(TextSpan(
+          text: match.group(3),
+          style: baseStyle.copyWith(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            backgroundColor: defaultColor.withOpacity(0.1),
+          ),
+        ));
+      }
+
+      lastEnd = match.end;
+    }
+
+    // Remaining text
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
+    }
+
+    return TextSpan(children: spans.isEmpty ? [TextSpan(text: text, style: baseStyle)] : spans);
+  }
+
+  bool _needsDateSeparator(int index) {
+    if (index == 0) return true;
+    final prev = _messages[index - 1].time;
+    final curr = _messages[index].time;
+    if (prev == null || curr == null) return false;
+    return prev.day != curr.day || prev.month != curr.month || prev.year != curr.year;
+  }
+
+  Widget _buildDateSeparator(DateTime? time) {
+    String label;
+    if (time == null) {
+      label = '';
+    } else {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final msgDate = DateTime(time.year, time.month, time.day);
+      final diff = today.difference(msgDate).inDays;
+
+      if (diff == 0) {
+        label = 'Today';
+      } else if (diff == 1) {
+        label = 'Yesterday';
+      } else {
+        label = '${time.day}/${time.month}/${time.year}';
+      }
+    }
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black26,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+      ),
+    );
+  }
+
+  /// Check if this message should be grouped (hide time if same sender within 1 min).
+  bool _isGrouped(int index) {
+    if (index == 0) return false;
+    final prev = _messages[index - 1];
+    final curr = _messages[index];
+    if (prev.isUser != curr.isUser) return false;
+    if (prev.time == null || curr.time == null) return false;
+    return curr.time!.difference(prev.time!).inSeconds < 60;
+  }
+
   void _showMessageMenu(_ChatMessage msg) {
+    final index = _messages.indexOf(msg);
+    final isLastAssistant = !msg.isUser &&
+        index == _messages.length - 1;
+
     showModalBottomSheet(
       context: context,
-      builder: (context) => SafeArea(
+      builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -553,27 +729,37 @@ class _ChatScreenState extends State<ChatScreen> {
               title: const Text('Copy'),
               onTap: () {
                 Clipboard.setData(ClipboardData(text: msg.text));
-                Navigator.pop(context);
+                Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
                 );
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('Share'),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Share intent
-              },
-            ),
+            if (msg.isUser)
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Edit & resend'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _editMessage(index);
+                },
+              ),
+            if (isLastAssistant)
+              ListTile(
+                leading: const Icon(Icons.refresh),
+                title: const Text('Regenerate'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _regenerate();
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text('Delete', style: TextStyle(color: Colors.red)),
               onTap: () {
                 setState(() => _messages.remove(msg));
                 _saveHistory();
-                Navigator.pop(context);
+                Navigator.pop(ctx);
               },
             ),
           ],
@@ -584,6 +770,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
