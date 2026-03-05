@@ -6,8 +6,13 @@ import '../providers/node_provider.dart';
 import '../widgets/gateway_controls.dart';
 import '../widgets/status_card.dart';
 import 'node_screen.dart';
+import 'agents_screen.dart';
+import 'backup_screen.dart';
+import 'chat_screen.dart';
 import 'doctor_screen.dart';
+import 'file_browser_screen.dart';
 import 'packages_screen.dart';
+import 'update_screen.dart';
 import 'web_dashboard_screen.dart';
 import 'logs_screen.dart';
 import 'settings/settings_main_screen.dart';
@@ -74,6 +79,42 @@ class DashboardScreen extends StatelessWidget {
             ),
 
             StatusCard(
+              title: 'Chat',
+              subtitle: 'Talk to your agent directly',
+              icon: Icons.chat,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ChatScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Agents',
+              subtitle: 'Add, edit, remove agents',
+              icon: Icons.smart_toy,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AgentsScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Files',
+              subtitle: 'Browse workspace & edit files',
+              icon: Icons.folder,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const FileBrowserScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Packages',
+              subtitle: 'Install dev tools — Python, Git, jq, ffmpeg...',
+              icon: Icons.inventory_2,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PackagesScreen()),
+              ),
+            ),
+            StatusCard(
               title: 'Doctor',
               subtitle: 'System health & diagnostics',
               icon: Icons.health_and_safety,
@@ -83,24 +124,30 @@ class DashboardScreen extends StatelessWidget {
               ),
             ),
             StatusCard(
-              title: 'Packages',
-              subtitle: 'Install dev tools — Python, Git, Go, Make',
-              icon: Icons.inventory_2,
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const PackagesScreen()),
-              ),
-            ),
-
-
-
-            StatusCard(
               title: 'Logs',
               subtitle: 'View gateway output and errors',
               icon: Icons.article_outlined,
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const LogsScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Backup & Restore',
+              subtitle: 'Export or import your setup',
+              icon: Icons.backup,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const BackupScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Update',
+              subtitle: 'Check for OpenClaw updates',
+              icon: Icons.system_update,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const UpdateScreen()),
               ),
             ),
 
