@@ -7,6 +7,7 @@ import '../widgets/gateway_controls.dart';
 import '../widgets/status_card.dart';
 import 'node_screen.dart';
 import 'doctor_screen.dart';
+import 'packages_screen.dart';
 import 'web_dashboard_screen.dart';
 import 'logs_screen.dart';
 import 'settings/settings_main_screen.dart';
@@ -74,11 +75,20 @@ class DashboardScreen extends StatelessWidget {
 
             StatusCard(
               title: 'Doctor',
-              subtitle: 'System health checks',
+              subtitle: 'System health & diagnostics',
               icon: Icons.health_and_safety,
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const DoctorScreen()),
+              ),
+            ),
+            StatusCard(
+              title: 'Packages',
+              subtitle: 'Install dev tools — Python, Git, Go, Make',
+              icon: Icons.inventory_2,
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PackagesScreen()),
               ),
             ),
 
