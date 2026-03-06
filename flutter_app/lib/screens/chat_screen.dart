@@ -23,7 +23,8 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  bool _appInForeground = true;
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<_ChatMessage> _messages = [];
@@ -39,8 +40,14 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
     _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
   }
 
   void _onScroll() {
@@ -253,6 +260,14 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _sending = false);
     _saveHistory();
     _scrollToBottom();
+
+    // Send notification if app is in background
+    if (!_appInForeground && _streamBuffer.isNotEmpty && !assistantMsg.isError) {
+      final preview = _streamBuffer.length > 100
+          ? '${_streamBuffer.substring(0, 100)}…'
+          : _streamBuffer;
+      NativeBridge.sendChatNotification('OpenClaw', preview);
+    }
   }
 
   Future<void> _regenerate() async {
@@ -837,6 +852,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();

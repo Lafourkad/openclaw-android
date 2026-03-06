@@ -155,6 +155,14 @@ class NativeBridge {
     return await startGateway();
   }
 
+  /// Send a chat notification (for when app is in background).
+  static Future<void> sendChatNotification(String title, String body) async {
+    await _channel.invokeMethod('sendChatNotification', {
+      'title': title,
+      'body': body,
+    });
+  }
+
   static Future<bool> isGatewayRunning() async {
     return await _channel.invokeMethod('isGatewayRunning');
   }

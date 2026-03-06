@@ -20,8 +20,10 @@ class GatewayService : Service() {
     companion object {
         const val CHANNEL_ID = "openclaw_gateway"
         const val ALERT_CHANNEL_ID = "openclaw_alerts"
+        const val CHAT_CHANNEL_ID = "openclaw_chat"
         const val NOTIFICATION_ID = 1
         const val CRASH_NOTIFICATION_ID = 2
+        const val CHAT_NOTIFICATION_ID = 3
         var isRunning = false
             private set
         var logSink: EventChannel.EventSink? = null
@@ -424,6 +426,17 @@ class GatewayService : Service() {
                 enableVibration(true)
             }
             manager.createNotificationChannel(alertChannel)
+
+            // Chat messages channel
+            val chatChannel = NotificationChannel(
+                CHAT_CHANNEL_ID,
+                "Chat Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications when the agent responds"
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(chatChannel)
         }
     }
 

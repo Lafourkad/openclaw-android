@@ -675,6 +675,12 @@ class MainActivity : FlutterActivity() {
                         }
                     }.start()
                 }
+                "sendChatNotification" -> {
+                    val title = call.argument<String>("title") ?: "OpenClaw"
+                    val body = call.argument<String>("body") ?: ""
+                    sendChatNotification(title, body)
+                    result.success(true)
+                }
                 else -> {
                     result.notImplemented()
                 }
@@ -682,6 +688,7 @@ class MainActivity : FlutterActivity() {
         }
 
         createUrlNotificationChannel()
+        createChatNotificationChannel()
         requestNotificationPermission()
         requestStoragePermissionOnLaunch()
 
@@ -733,6 +740,51 @@ class MainActivity : FlutterActivity() {
                 )
             }
         }
+    }
+
+    private fun createChatNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                GatewayService.CHAT_CHANNEL_ID,
+                "Chat Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Agent response notifications"
+                enableVibration(true)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun sendChatNotification(title: String, body: String) {
+        try {
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 99, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, GatewayService.CHAT_CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }
+
+            // Truncate body for notification
+            val preview = if (body.length > 200) body.substring(0, 200) + "…" else body
+
+            builder.setContentTitle(title)
+                .setContentText(preview)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setStyle(Notification.BigTextStyle().bigText(preview))
+
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(GatewayService.CHAT_NOTIFICATION_ID, builder.build())
+        } catch (_: Exception) {}
     }
 
     private fun createUrlNotificationChannel() {
