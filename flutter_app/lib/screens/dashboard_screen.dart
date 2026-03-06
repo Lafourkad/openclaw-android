@@ -8,7 +8,6 @@ import '../widgets/status_card.dart';
 import 'node_screen.dart';
 import 'agents_screen.dart';
 import 'backup_screen.dart';
-import 'chat_screen.dart';
 import 'doctor_screen.dart';
 import 'file_browser_screen.dart';
 import 'packages_screen.dart';
@@ -27,7 +26,7 @@ class DashboardScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('OpenClaw'),
+        title: const Text('Dashboard'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
@@ -47,7 +46,7 @@ class DashboardScreen extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(left: 4, bottom: 8),
               child: Text(
-                'QUICK ACTIONS',
+                'MANAGE',
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w600,
@@ -56,37 +55,6 @@ class DashboardScreen extends StatelessWidget {
               ),
             ),
 
-            Consumer<GatewayProvider>(
-              builder: (context, provider, _) {
-                return StatusCard(
-                  title: 'Web Dashboard',
-                  subtitle: provider.state.isRunning
-                      ? 'Open OpenClaw dashboard in browser'
-                      : 'Start gateway first',
-                  icon: Icons.dashboard,
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: provider.state.isRunning
-                      ? () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => WebDashboardScreen(
-                                url: provider.state.dashboardUrl,
-                              ),
-                            ),
-                          )
-                      : null,
-                );
-              },
-            ),
-
-            StatusCard(
-              title: 'Chat',
-              subtitle: 'Talk to your agent directly',
-              icon: Icons.chat,
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChatScreen()),
-              ),
-            ),
             StatusCard(
               title: 'Agents',
               subtitle: 'Add, edit, remove agents',
@@ -107,13 +75,27 @@ class DashboardScreen extends StatelessWidget {
             ),
             StatusCard(
               title: 'Packages',
-              subtitle: 'Install dev tools — Python, Git, jq, ffmpeg...',
+              subtitle: 'Install tools — Python, Git, jq, ffmpeg...',
               icon: Icons.inventory_2,
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const PackagesScreen()),
               ),
             ),
+
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 8),
+              child: Text(
+                'DIAGNOSTICS',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+
             StatusCard(
               title: 'Doctor',
               subtitle: 'System health & diagnostics',
@@ -125,13 +107,46 @@ class DashboardScreen extends StatelessWidget {
             ),
             StatusCard(
               title: 'Logs',
-              subtitle: 'View gateway output and errors',
+              subtitle: 'View output and errors',
               icon: Icons.article_outlined,
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const LogsScreen()),
               ),
             ),
+
+            Consumer<GatewayProvider>(
+              builder: (context, provider, _) {
+                if (!provider.state.isRunning) return const SizedBox.shrink();
+                return StatusCard(
+                  title: 'Web Dashboard',
+                  subtitle: 'Open in browser',
+                  icon: Icons.language,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => WebDashboardScreen(
+                        url: provider.state.dashboardUrl,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 8),
+              child: Text(
+                'MAINTENANCE',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+
             StatusCard(
               title: 'Backup & Restore',
               subtitle: 'Export or import your setup',
@@ -169,6 +184,7 @@ class DashboardScreen extends StatelessWidget {
                 );
               },
             ),
+
             const SizedBox(height: 24),
             Center(
               child: Column(
