@@ -30,6 +30,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final List<_ChatMessage> _messages = [];
 
   bool _sending = false;
+  bool _ready = false; // true once gateway is up and ready
   String _streamBuffer = '';
   String? _filesDir;
   int _port = 18789;
@@ -63,28 +64,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _filesDir = await NativeBridge.getFilesDir();
     await _loadConfig();
     await _loadHistory();
-    await _ensureGatewayRunning();
+    await _ensureReady();
   }
 
-  /// Start gateway if not already running.
-  Future<void> _ensureGatewayRunning() async {
+  /// Silently ensure the backend is running. User sees a gentle loading state.
+  Future<void> _ensureReady() async {
+    // Quick check — is it already up?
+    if (await _isBackendUp()) {
+      setState(() => _ready = true);
+      return;
+    }
+
+    // Not up — start it silently
+    try {
+      await NativeBridge.startGateway();
+    } catch (_) {}
+
+    // Poll until ready (max ~15s)
+    for (int i = 0; i < 15; i++) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (await _isBackendUp()) {
+        if (mounted) setState(() => _ready = true);
+        return;
+      }
+    }
+
+    // Still not ready after 15s — let user try anyway
+    if (mounted) setState(() => _ready = true);
+  }
+
+  Future<bool> _isBackendUp() async {
     try {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 2);
       final request = await client.getUrl(
-        Uri.parse('http://127.0.0.1:$_port/__openclaw/control-ui-config.json'),
+        Uri.parse('http://127.0.0.1:$_port/v1/chat/completions'),
       );
+      request.headers.set('Content-Type', 'application/json');
+      // Just check if we get a response (even 405 means it's up)
       final response = await request.close().timeout(const Duration(seconds: 3));
       await response.drain();
       client.close();
-      // Gateway is running
+      return true;
     } catch (_) {
-      // Gateway not running — start it
-      try {
-        await NativeBridge.startGateway();
-        // Wait for it to boot
-        await Future.delayed(const Duration(seconds: 3));
-      } catch (_) {}
+      return false;
     }
   }
 
@@ -478,7 +501,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   Text(
-                    _sending ? 'typing...' : 'online',
+                    !_ready ? 'starting...' : (_sending ? 'typing...' : 'online'),
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
                   ),
                 ],
@@ -499,17 +522,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               children: [
                 _messages.isEmpty
                     ? Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: isDark ? Colors.white10 : Colors.black12,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            'Start a conversation',
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
+                        child: !_ready
+                            ? Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 32, height: 32,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: isDark ? Colors.white38 : Colors.black26,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Getting ready...',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: isDark ? Colors.white38 : Colors.black38,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: isDark ? Colors.white10 : Colors.black12,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  'Start a conversation',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                              ),
                       )
                     : ListView.builder(
                         controller: _scrollController,
@@ -580,7 +624,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         maxLines: 6,
                         minLines: 1,
                         textCapitalization: TextCapitalization.sentences,
-                        enabled: !_sending,
+                        enabled: _ready && !_sending,
                       ),
                     ),
                   ),
@@ -589,7 +633,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   Container(
                     width: 42, height: 42,
                     decoration: BoxDecoration(
-                      color: _sending ? Colors.grey : AppColors.accent,
+                      color: (_sending || !_ready) ? Colors.grey : AppColors.accent,
                       shape: BoxShape.circle,
                     ),
                     child: _sending
@@ -598,7 +642,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : IconButton(
-                            onPressed: _send,
+                            onPressed: _ready ? _send : null,
                             icon: const Icon(Icons.send, color: Colors.white, size: 18),
                             padding: EdgeInsets.zero,
                           ),
