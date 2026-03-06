@@ -344,7 +344,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     return Drawer(
-      backgroundColor: isDark ? const Color(0xFF17212B) : Colors.white,
+      backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
       child: SafeArea(
         child: Column(
           children: [
@@ -352,7 +352,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E2C3A) : AppColors.accent.withOpacity(0.1),
+                color: isDark ? AppColors.darkSurfaceAlt : AppColors.accent.withOpacity(0.1),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -471,9 +471,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF0E1621) : const Color(0xFFE8DFD5),
+      backgroundColor: isDark ? AppColors.darkBg : AppColors.lightSurface,
       appBar: AppBar(
-        backgroundColor: isDark ? const Color(0xFF17212B) : AppColors.accent,
+        backgroundColor: isDark ? AppColors.darkSurface : AppColors.accent,
         foregroundColor: Colors.white,
         leading: Builder(
           builder: (ctx) => IconButton(
@@ -576,7 +576,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     bottom: 8,
                     child: FloatingActionButton.small(
                       onPressed: _scrollToBottom,
-                      backgroundColor: isDark ? const Color(0xFF2B5278) : AppColors.accent,
+                      backgroundColor: isDark ? AppColors.accent : AppColors.accent,
                       child: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
                     ),
                   ),
@@ -588,7 +588,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF17212B) : Colors.white,
+              color: isDark ? AppColors.darkSurface : Colors.white,
               border: Border(top: BorderSide(color: isDark ? Colors.white10 : Colors.black12)),
             ),
             child: SafeArea(
@@ -609,7 +609,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF242F3D) : const Color(0xFFF0F0F0),
+                        color: isDark ? AppColors.darkBorder : const Color(0xFFF0F0F0),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: TextField(
@@ -666,10 +666,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         : '';
 
     final bubbleColor = isUser
-        ? (isDark ? const Color(0xFF2B5278) : const Color(0xFFEFFFDE))
+        ? (isDark ? AppColors.accent : AppColors.accent.withOpacity(0.15))
         : msg.isError
             ? (isDark ? const Color(0xFF3D2020) : const Color(0xFFFFE0E0))
-            : (isDark ? const Color(0xFF182533) : Colors.white);
+            : (isDark ? AppColors.darkSurfaceAlt : Colors.white);
 
     final textColor = isDark ? Colors.white : Colors.black87;
     final timeColor = isDark ? Colors.white38 : Colors.black38;
