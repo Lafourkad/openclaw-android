@@ -101,6 +101,9 @@ class GatewayService {
         }
       }
 
+      // Debug: dump config keys to logcat
+      await NativeBridge.debugConfigKeys();
+
       // Read dashboard URL with Control UI token from config
       final dashboardUrl = await NativeBridge.readDashboardUrl();
       if (dashboardUrl.isNotEmpty) {

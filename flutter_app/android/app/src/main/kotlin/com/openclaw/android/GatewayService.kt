@@ -617,20 +617,19 @@ I'm $agentName — a personal AI assistant running on your phone.
             val text = configFile.readText()
             val obj = org.json.JSONObject(text)
 
-            // gateway.mode = local + disable device identity check for Control UI
+            // gateway.mode = local + auth.mode = none (loopback-only, no token needed)
             val gw = obj.optJSONObject("gateway") ?: org.json.JSONObject()
             if (!gw.has("mode")) gw.put("mode", "local")
+            val authCfg = gw.optJSONObject("auth") ?: org.json.JSONObject()
+            authCfg.put("mode", "none")
+            gw.put("auth", authCfg)
+            // Control UI: disable device identity check
             val controlUi = gw.optJSONObject("controlUi") ?: org.json.JSONObject()
             controlUi.put("dangerouslyDisableDeviceAuth", true)
             controlUi.put("allowInsecureAuth", true)
             gw.put("controlUi", controlUi)
             obj.put("gateway", gw)
-
-            // Log dashboard URL with auth token so Flutter can capture it
-            val authToken = obj.optJSONObject("auth")?.optString("token", "")?.takeIf { it.isNotEmpty() }
-            if (authToken != null) {
-                Log.i("OpenclawGW", "Dashboard: http://localhost:18789/#token=$authToken")
-            }
+            Log.i("OpenclawGW", "patchConfig: gateway.auth.mode=none set (loopback, no token required)")
 
             // Clean up invalid plugins key if it was previously written
             if (obj.has("plugins")) {

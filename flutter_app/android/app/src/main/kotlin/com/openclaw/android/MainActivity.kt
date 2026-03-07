@@ -3,6 +3,7 @@ package com.openclaw.android
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.util.Log
 import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -126,6 +127,32 @@ class MainActivity : FlutterActivity() {
                             }
                         } catch (e: Exception) {
                             runOnUiThread { result.success("") }
+                        }
+                    }.start()
+                }
+                "debugConfigKeys" -> {
+                    Thread {
+                        try {
+                            val f = java.io.File("$filesDir/.openclaw/openclaw.json")
+                            if (f.exists()) {
+                                val j = org.json.JSONObject(f.readText())
+                                // Dump top-level keys and auth sub-keys
+                                val keys = j.keys().asSequence().toList()
+                                val authKeys = j.optJSONObject("auth")?.keys()?.asSequence()?.toList() ?: emptyList()
+                                val gwKeys = j.optJSONObject("gateway")?.keys()?.asSequence()?.toList() ?: emptyList()
+                                val cuiKeys = j.optJSONObject("gateway")?.optJSONObject("controlUi")?.keys()?.asSequence()?.toList() ?: emptyList()
+                                Log.i("OpenclawGW", "CONFIG_KEYS top=${keys} auth=${authKeys} gw=${gwKeys} cui=${cuiKeys}")
+                                // Also dump full raw content for inspection
+                                val raw = f.readText().take(2000)
+                                Log.i("OpenclawGW", "CONFIG_RAW: $raw")
+                                runOnUiThread { result.success("keys=$keys auth=$authKeys") }
+                            } else {
+                                Log.i("OpenclawGW", "CONFIG_KEYS: file not found")
+                                runOnUiThread { result.success("file not found") }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("OpenclawGW", "CONFIG_KEYS error: ${e.message}")
+                            runOnUiThread { result.success("error: ${e.message}") }
                         }
                     }.start()
                 }

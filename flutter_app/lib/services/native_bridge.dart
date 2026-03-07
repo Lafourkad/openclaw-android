@@ -283,6 +283,10 @@ class NativeBridge {
     return await _channel.invokeMethod<String>('readGatewayToken') ?? '';
   }
 
+  static Future<String> debugConfigKeys() async {
+    return await _channel.invokeMethod<String>('debugConfigKeys') ?? '';
+  }
+
   static Future<String> readDashboardUrl() async {
     return await _channel.invokeMethod<String>('readDashboardUrl') ?? 'http://localhost:18789';
   }
