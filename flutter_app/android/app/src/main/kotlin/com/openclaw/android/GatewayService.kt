@@ -216,7 +216,11 @@ class GatewayService : Service() {
                                 val cfg = File("$filesDir/.openclaw/openclaw.json")
                                 if (cfg.exists()) {
                                     val cfgJson = org.json.JSONObject(cfg.readText())
-                                    val tok = cfgJson.optJSONObject("auth")?.optString("token","")?.takeIf { it.isNotEmpty() }
+                                    // Token is at gateway.auth.token (not top-level auth.token)
+                                    val tok = cfgJson.optJSONObject("gateway")
+                                        ?.optJSONObject("auth")
+                                        ?.optString("token","")
+                                        ?.takeIf { it.isNotEmpty() }
                                     if (tok != null) {
                                         Log.i("OpenclawGW", "http://localhost:18789/#token=$tok")
                                         emitLog("http://localhost:18789/#token=$tok")

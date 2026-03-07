@@ -118,10 +118,13 @@ class MainActivity : FlutterActivity() {
                         try {
                             val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
                             if (configFile.exists()) {
-                                val json = configFile.readText()
-                                // Extract auth.token value with simple regex (no JSON lib needed)
-                                val match = Regex(""""token"\s*:\s*"([^"]+)"""").find(json)
-                                runOnUiThread { result.success(match?.groupValues?.get(1) ?: "") }
+                                val json = org.json.JSONObject(configFile.readText())
+                                // Token is at gateway.auth.token
+                                val token = json.optJSONObject("gateway")
+                                    ?.optJSONObject("auth")
+                                    ?.optString("token", "")
+                                    ?: ""
+                                runOnUiThread { result.success(token) }
                             } else {
                                 runOnUiThread { result.success("") }
                             }
@@ -179,12 +182,13 @@ class MainActivity : FlutterActivity() {
                                     }
                                 }
 
-                            // Fallback: use gateway auth token to build URL
+                            // Fallback: use gateway.auth.token to build URL
                             if (foundUrl == null) {
                                 val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
                                 if (configFile.exists()) {
                                     val json = org.json.JSONObject(configFile.readText())
-                                    val authToken = json.optJSONObject("auth")
+                                    val authToken = json.optJSONObject("gateway")
+                                        ?.optJSONObject("auth")
                                         ?.optString("token", "")
                                         ?.takeIf { it.isNotEmpty() }
                                     if (authToken != null) {
