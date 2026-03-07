@@ -22,7 +22,8 @@ class RegistryPackage {
   final IconData icon;
   final Color color;
   final PackageSource source;
-  final String downloadUrl;
+  /// Download URL(s). Multiple URLs = extract all APKs to the same directory.
+  final List<String> downloadUrls;
   final String? estimatedSize;
   /// Binary paths to check (relative to install dir)
   final List<String> binaries;
@@ -40,7 +41,7 @@ class RegistryPackage {
     required this.icon,
     required this.color,
     required this.source,
-    required this.downloadUrl,
+    required this.downloadUrls,
     this.estimatedSize,
     this.binaries = const [],
     this.deps = const [],
@@ -60,7 +61,7 @@ class PackageRegistry {
       description: 'JSON processor — parse, filter, transform JSON',
       category: 'CLI Tools', icon: Icons.data_object, color: Colors.teal,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/jq-1.7.1-r0.apk',
+      downloadUrls: ['$_alpineMain/jq-1.7.1-r0.apk'],
       estimatedSize: '~500 KB', binaries: ['usr/bin/jq'],
       deps: ['oniguruma'],
     ),
@@ -69,7 +70,7 @@ class PackageRegistry {
       description: 'HTTP client — download files, test APIs',
       category: 'CLI Tools', icon: Icons.cloud_download, color: Colors.blue,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/curl-8.14.1-r2.apk',
+      downloadUrls: ['$_alpineMain/curl-8.14.1-r2.apk'],
       estimatedSize: '~500 KB', binaries: ['usr/bin/curl'],
     ),
     RegistryPackage(
@@ -77,7 +78,7 @@ class PackageRegistry {
       description: 'File downloader — recursive, resumable',
       category: 'CLI Tools', icon: Icons.download, color: Colors.indigo,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/wget-1.25.0-r0.apk',
+      downloadUrls: ['$_alpineMain/wget-1.25.0-r0.apk'],
       estimatedSize: '~600 KB', binaries: ['usr/bin/wget'],
     ),
     RegistryPackage(
@@ -85,7 +86,7 @@ class PackageRegistry {
       description: 'Directory listing in tree format',
       category: 'CLI Tools', icon: Icons.account_tree, color: Colors.green,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/tree-2.2.1-r0.apk',
+      downloadUrls: ['$_alpineMain/tree-2.2.1-r0.apk'],
       estimatedSize: '~50 KB', binaries: ['usr/bin/tree'],
     ),
     RegistryPackage(
@@ -93,7 +94,7 @@ class PackageRegistry {
       description: 'Pager — scroll through text files',
       category: 'CLI Tools', icon: Icons.description, color: Colors.blueGrey,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/less-668-r0.apk',
+      downloadUrls: ['$_alpineMain/less-668-r0.apk'],
       estimatedSize: '~150 KB', binaries: ['usr/bin/less'],
     ),
 
@@ -103,7 +104,7 @@ class PackageRegistry {
       description: 'Ultra-fast grep — regex search in files',
       category: 'Modern CLI', icon: Icons.search, color: Colors.purple,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/ripgrep-14.1.1-r0.apk',
+      downloadUrls: ['$_alpineCommunity/ripgrep-14.1.1-r0.apk'],
       estimatedSize: '~2 MB', binaries: ['usr/bin/rg'],
     ),
     RegistryPackage(
@@ -111,7 +112,7 @@ class PackageRegistry {
       description: 'Modern find — fast file search',
       category: 'Modern CLI', icon: Icons.folder_open, color: Colors.deepPurple,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/fd-10.2.0-r0.apk',
+      downloadUrls: ['$_alpineCommunity/fd-10.2.0-r0.apk'],
       estimatedSize: '~1.5 MB', binaries: ['usr/bin/fd'],
     ),
     RegistryPackage(
@@ -119,7 +120,7 @@ class PackageRegistry {
       description: 'Cat with syntax highlighting and git integration',
       category: 'Modern CLI', icon: Icons.code, color: Colors.amber,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/bat-0.24.0-r3.apk',
+      downloadUrls: ['$_alpineCommunity/bat-0.24.0-r3.apk'],
       estimatedSize: '~3 MB', binaries: ['usr/bin/bat'],
     ),
     RegistryPackage(
@@ -127,7 +128,7 @@ class PackageRegistry {
       description: 'Fuzzy finder — interactive search/filter',
       category: 'Modern CLI', icon: Icons.filter_list, color: Colors.pink,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/fzf-0.56.3-r5.apk',
+      downloadUrls: ['$_alpineCommunity/fzf-0.56.3-r5.apk'],
       estimatedSize: '~2 MB', binaries: ['usr/bin/fzf'],
     ),
     RegistryPackage(
@@ -135,7 +136,7 @@ class PackageRegistry {
       description: 'Modern ls replacement with colors, git status, icons',
       category: 'Modern CLI', icon: Icons.list, color: Colors.lime,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/eza-0.20.12-r0.apk',
+      downloadUrls: ['$_alpineCommunity/eza-0.20.12-r0.apk'],
       estimatedSize: '~1 MB', binaries: ['usr/bin/eza'],
     ),
 
@@ -145,7 +146,7 @@ class PackageRegistry {
       description: 'Simple terminal text editor',
       category: 'Editors', icon: Icons.edit, color: Colors.grey,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/nano-8.2-r0.apk',
+      downloadUrls: ['$_alpineMain/nano-8.2-r0.apk'],
       estimatedSize: '~400 KB', binaries: ['usr/bin/nano'],
     ),
     RegistryPackage(
@@ -153,7 +154,7 @@ class PackageRegistry {
       description: 'Modern Vim — extensible editor',
       category: 'Editors', icon: Icons.terminal, color: Colors.green,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/neovim-0.10.4-r0.apk',
+      downloadUrls: ['$_alpineCommunity/neovim-0.10.4-r0.apk'],
       estimatedSize: '~8 MB', binaries: ['usr/bin/nvim'],
     ),
 
@@ -163,7 +164,7 @@ class PackageRegistry {
       description: 'Embedded SQL database — query .db files',
       category: 'Data & Media', icon: Icons.storage, color: Colors.blue,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/sqlite-3.48.0-r4.apk',
+      downloadUrls: ['$_alpineMain/sqlite-3.48.0-r4.apk'],
       estimatedSize: '~1 MB', binaries: ['usr/bin/sqlite3'],
     ),
     RegistryPackage(
@@ -171,7 +172,7 @@ class PackageRegistry {
       description: 'Audio/video processing — convert, trim, encode',
       category: 'Data & Media', icon: Icons.movie, color: Colors.red,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/ffmpeg-6.1.2-r1.apk',
+      downloadUrls: ['$_alpineCommunity/ffmpeg-6.1.2-r1.apk'],
       estimatedSize: '~15 MB', binaries: ['usr/bin/ffmpeg', 'usr/bin/ffprobe'],
       defaultInstall: true,
     ),
@@ -180,7 +181,7 @@ class PackageRegistry {
       description: 'Download videos from YouTube and 1000+ sites',
       category: 'Data & Media', icon: Icons.video_library, color: Colors.red,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/yt-dlp-2025.03.31-r0.apk',
+      downloadUrls: ['https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.03/yt-dlp_linux_aarch64'],
       estimatedSize: '~5 MB', binaries: ['usr/bin/yt-dlp'],
     ),
 
@@ -190,7 +191,11 @@ class PackageRegistry {
       description: 'SSH client — connect to remote servers',
       category: 'Network', icon: Icons.vpn_key, color: Colors.orange,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/openssh-9.9_p2-r0.apk',
+      downloadUrls: [
+        '$_alpineMain/openssh-client-default-9.9_p2-r0.apk',
+        '$_alpineMain/openssh-client-common-9.9_p2-r0.apk',
+        '$_alpineMain/openssh-keygen-9.9_p2-r0.apk',
+      ],
       estimatedSize: '~2 MB', binaries: ['usr/bin/ssh', 'usr/bin/scp', 'usr/bin/ssh-keygen'],
     ),
     RegistryPackage(
@@ -198,7 +203,7 @@ class PackageRegistry {
       description: 'Multipurpose relay — TCP/UDP tunnels, proxies',
       category: 'Network', icon: Icons.swap_horiz, color: Colors.cyan,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/socat-1.8.0.3-r0.apk',
+      downloadUrls: ['$_alpineMain/socat-1.8.0.3-r0.apk'],
       estimatedSize: '~300 KB', binaries: ['usr/bin/socat'],
     ),
     RegistryPackage(
@@ -206,7 +211,7 @@ class PackageRegistry {
       description: 'Modern encryption tool — simple file encryption',
       category: 'Network', icon: Icons.lock, color: Colors.deepOrange,
       source: PackageSource.alpineCommunity,
-      downloadUrl: '$_alpineCommunity/age-1.2.1-r5.apk',
+      downloadUrls: ['$_alpineCommunity/age-1.2.1-r5.apk'],
       estimatedSize: '~3 MB', binaries: ['usr/bin/age', 'usr/bin/age-keygen'],
     ),
 
@@ -216,7 +221,7 @@ class PackageRegistry {
       description: 'Interactive process viewer',
       category: 'System', icon: Icons.monitor_heart, color: Colors.green,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/htop-3.3.0-r0.apk',
+      downloadUrls: ['$_alpineMain/htop-3.3.0-r0.apk'],
       estimatedSize: '~300 KB', binaries: ['usr/bin/htop'],
     ),
     RegistryPackage(
@@ -224,7 +229,7 @@ class PackageRegistry {
       description: 'Terminal multiplexer — split panes, detach sessions',
       category: 'System', icon: Icons.view_column, color: Colors.teal,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/tmux-3.5a-r0.apk',
+      downloadUrls: ['$_alpineMain/tmux-3.5a-r0.apk'],
       estimatedSize: '~500 KB', binaries: ['usr/bin/tmux'],
     ),
     RegistryPackage(
@@ -232,7 +237,7 @@ class PackageRegistry {
       description: 'Fast file sync — incremental copy/backup',
       category: 'System', icon: Icons.sync, color: Colors.indigo,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/rsync-3.4.1-r1.apk',
+      downloadUrls: ['$_alpineMain/rsync-3.4.1-r1.apk'],
       estimatedSize: '~500 KB', binaries: ['usr/bin/rsync'],
     ),
 
@@ -242,7 +247,7 @@ class PackageRegistry {
       description: 'Create ZIP archives',
       category: 'Archive', icon: Icons.folder_zip, color: Colors.brown,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/zip-3.0-r13.apk',
+      downloadUrls: ['$_alpineMain/zip-3.0-r13.apk'],
       estimatedSize: '~200 KB', binaries: ['usr/bin/zip'],
     ),
     RegistryPackage(
@@ -250,7 +255,7 @@ class PackageRegistry {
       description: 'Extract ZIP archives',
       category: 'Archive', icon: Icons.folder_zip, color: Colors.brown,
       source: PackageSource.alpineMain,
-      downloadUrl: '$_alpineMain/unzip-6.0-r15.apk',
+      downloadUrls: ['$_alpineMain/unzip-6.0-r15.apk'],
       estimatedSize: '~200 KB', binaries: ['usr/bin/unzip'],
     ),
   ];

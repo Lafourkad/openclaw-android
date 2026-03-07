@@ -90,25 +90,45 @@ class _PackagesScreenState extends State<PackagesScreen> {
       await Directory(alpineDir).create(recursive: true);
       await Directory(binDir).create(recursive: true);
 
-      // Download APK
-      final apkPath = '$tmpDir/${pkg.id}.apk';
+      // Download and extract all package URLs
       final client = HttpClient();
-      final request = await client.getUrl(Uri.parse(pkg.downloadUrl));
-      final response = await request.close();
-      final file = File(apkPath);
-      final sink = file.openWrite();
-      await response.pipe(sink);
+      for (int i = 0; i < pkg.downloadUrls.length; i++) {
+        final url = pkg.downloadUrls[i];
+        setState(() => _regStatus[pkg.id] = 'Downloading ${i + 1}/${pkg.downloadUrls.length}...');
+        
+        final request = await client.getUrl(Uri.parse(url));
+        final response = await request.close();
+        // Handle redirects for GitHub releases (302)
+        if (response.statusCode >= 400) {
+          throw 'Download failed: HTTP ${response.statusCode} for $url';
+        }
+
+        if (url.endsWith('.apk')) {
+          // Alpine APK = gzip tar
+          final apkPath = '$tmpDir/${pkg.id}_$i.apk';
+          final file = File(apkPath);
+          final sink = file.openWrite();
+          await response.pipe(sink);
+          
+          setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${pkg.downloadUrls.length}...');
+          await Process.run(
+            '/system/bin/tar', ['-xzf', apkPath, '-C', alpineDir],
+            environment: {'PATH': '/system/bin'},
+          );
+          try { File(apkPath).deleteSync(); } catch (_) {}
+        } else {
+          // Standalone binary (e.g. yt-dlp GitHub release)
+          final binName = pkg.binaries.first.split('/').last;
+          final binSubDir = '$alpineDir/usr/bin';
+          await Directory(binSubDir).create(recursive: true);
+          final binFile = File('$binSubDir/$binName');
+          final sink = binFile.openWrite();
+          await response.pipe(sink);
+        }
+      }
       client.close();
 
-      setState(() => _regStatus[pkg.id] = 'Extracting...');
-
-      // Alpine APK = gzip tar with data.tar.gz inside, or just a tar.gz
-      // Extract to alpine dir
-      final result = await Process.run(
-        '/system/bin/tar',
-        ['-xzf', apkPath, '-C', alpineDir],
-        environment: {'PATH': '/system/bin'},
-      );
+      setState(() => _regStatus[pkg.id] = 'Setting up wrappers...');
 
       // Symlink binaries to bin/
       for (final binPath in pkg.binaries) {
@@ -122,22 +142,44 @@ class _PackagesScreenState extends State<PackagesScreen> {
           final ldso = '${await NativeBridge.getNativeLibDir()}/libld_aarch64.so';
           final glibcLib = '$_filesDir/glibc/lib';
           final wrapper = File(dst);
+          // Use /system/bin/sh as interpreter since direct exec from /data is blocked
           await wrapper.writeAsString(
             '#!/system/bin/sh\n'
             'exec $ldso --library-path $glibcLib $src "\$@"\n'
           );
+          // Note: scripts in /data can't be executed directly due to W^X/SELinux
+          // The shell spawns them via /system/bin/sh automatically
           await Process.run('/system/bin/chmod', ['+x', dst]);
         }
       }
 
-      // Cleanup
-      try { File(apkPath).deleteSync(); } catch (_) {}
 
       // Verify the package actually works
       setState(() => _regStatus[pkg.id] = 'Verifying...');
-      final works = await PackageService.isRegistryPackageInstalled(pkg);
-      if (!works) {
-        throw 'Binary extracted but not functional (missing libs?)';
+      // Check what files exist for debugging
+      final firstBin = pkg.binaries.first.split('/').last;
+      final wrapperFile = File('$binDir/$firstBin');
+      final srcFile = File('$alpineDir/${pkg.binaries.first}');
+      if (!srcFile.existsSync()) {
+        throw 'Source binary not found: $alpineDir/${pkg.binaries.first}';
+      }
+      if (!wrapperFile.existsSync()) {
+        throw 'Wrapper not created: $binDir/$firstBin';
+      }
+      // Try running it via /system/bin/sh (direct exec blocked by W^X / SELinux)
+      try {
+        final testResult = await Process.run(
+          '/system/bin/sh', [wrapperFile.path, '--version'],
+          environment: {'PATH': '$binDir:/system/bin'},
+        ).timeout(const Duration(seconds: 5));
+        if (testResult.exitCode != 0 && 
+            testResult.stdout.toString().isEmpty && 
+            testResult.stderr.toString().isEmpty) {
+          throw 'Binary returned exit ${testResult.exitCode} with no output';
+        }
+      } catch (e) {
+        if (e is String) rethrow;
+        throw 'Binary exec failed: $e';
       }
 
       setState(() {

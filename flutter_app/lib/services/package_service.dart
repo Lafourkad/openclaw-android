@@ -70,9 +70,10 @@ class PackageService {
     final firstBin = pkg.binaries.first.split('/').last;
     final wrapperPath = '$binDir/$firstBin';
     try {
+      // Use /system/bin/sh to run wrapper (direct exec blocked by W^X / SELinux)
       final result = await Process.run(
-        wrapperPath,
-        ['--version'],
+        '/system/bin/sh',
+        [wrapperPath, '--version'],
         environment: {'PATH': '$binDir:/system/bin'},
       ).timeout(const Duration(seconds: 5));
       // Some tools return 0, some return 1/2 for --version but still produce output

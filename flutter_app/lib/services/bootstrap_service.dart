@@ -415,6 +415,7 @@ class BootstrapService {
   /// Resolve the download URL for a package (some use AppConstants).
   String _getDownloadUrl(OptionalPackage pkg) {
     if (pkg.downloadUrl != null) return pkg.downloadUrl!;
+    if (pkg.downloadUrls != null && pkg.downloadUrls!.isNotEmpty) return pkg.downloadUrls!.first;
 
     switch (pkg.id) {
       case 'python':
@@ -503,7 +504,7 @@ class BootstrapService {
     // Download
     final apkPath = '$tmpDir/${pkg.id}.apk';
     final client = HttpClient();
-    final request = await client.getUrl(Uri.parse(pkg.downloadUrl));
+    final request = await client.getUrl(Uri.parse(pkg.downloadUrls.first));
     final response = await request.close();
     final file = File(apkPath);
     final sink = file.openWrite();
