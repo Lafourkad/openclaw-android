@@ -107,6 +107,8 @@ exec "$binDir/busybox" "$@"
         "GOPATH"              to "$filesDir/gopath",
         "GOCACHE"             to "$filesDir/tmp/go-cache",
         "PATH"                to "$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
+        "MUSL_LAUNCHER"       to "$nativeLibDir/libmusl-launcher.so",
+        "ALPINE_BIN"          to "$filesDir/alpine/usr/bin",
     )
 
     /** Bootstrap env — no NODE_OPTIONS, glibc-compat.js not yet in place */

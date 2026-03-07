@@ -175,16 +175,14 @@ try { fs.unlinkSync(tmpDir + "/debian-binary"); } catch(e) {}
           // Make executable
           await Process.run('/system/bin/chmod', ['+x', src]);
           // Create wrapper script that uses glibc ld-linux
-          // Use musl loader from APK native libs (bundled as libmusl-ld.so)
-          // Must be in /data/app/.../lib/arm64/ — SELinux blocks exec from /data/user/
-          final ldMusl = '${await NativeBridge.getNativeLibDir()}/libmusl-ld.so';
-          final muslLib = '$_filesDir/git/lib';
+          // Use libmusl-launcher.so — ELF binary bundled in APK native libs.
+          // SELinux allows exec from /data/app/.../lib/arm64/ but NOT shell scripts in /data/user/
+          // libmusl-launcher.so reads HOME env var to find ld-musl + lib paths automatically.
+          final launcher = '${await NativeBridge.getNativeLibDir()}/libmusl-launcher.so';
           final wrapper = File(dst);
-          // Use /system/bin/sh as interpreter since direct exec from /data is blocked
-          // Include alpine/usr/lib for shared lib deps (e.g. libonig for jq)
           await wrapper.writeAsString(
             '#!/system/bin/sh\n'
-            'exec ${ldMusl} --library-path ${muslLib}:$_filesDir/alpine/usr/lib ${src} "\$@"\n'
+            'exec ${launcher} ${src} "\$@"\n'
           );
           // Note: scripts in /data can't be executed directly due to W^X/SELinux
           // The shell spawns them via /system/bin/sh automatically

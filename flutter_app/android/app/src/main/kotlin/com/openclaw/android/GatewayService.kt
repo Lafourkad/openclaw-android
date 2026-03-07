@@ -436,7 +436,10 @@ class GatewayService : Service() {
                 appendLine("- Gateway runs on loopback only (127.0.0.1:18789)")
                 appendLine("- No GPU compute — LLM inference is remote only")
                 appendLine("- exec runs commands via glibc ld.so → node")
-                appendLine("- **PATH quirk:** Scripts in `bin/` cannot to run directly (W^X / SELinux). Use `sh -c 'command'` instead of `command`")
+                appendLine("- **Alpine packages:** Use the launcher: `\$MUSL_LAUNCHER \$HOME/alpine/usr/bin/<tool> [args]`")
+                appendLine("  - MUSL_LAUNCHER is set automatically in PATH env")
+                appendLine("  - Example: `\$MUSL_LAUNCHER \$HOME/alpine/usr/bin/jq --version`")
+                appendLine("  - Or shorter: the exec tool handles this transparently via PATH")
             }
 
             // Always overwrite — we generate fresh device info every start
