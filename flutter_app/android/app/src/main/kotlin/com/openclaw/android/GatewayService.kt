@@ -74,7 +74,7 @@ class GatewayService : Service() {
                 palace.onLog = { msg -> emitLog(msg) }
                 palace.init()
                 memoryPalace = palace
-                val server = com.openclaw.android.memory.MemoryPalaceServer(palace, port = 18792)
+                val server = com.openclaw.android.memory.MemoryPalaceServer(palace, port = 18795)
                 server.start()
                 memoryServer = server
                 emitLog("[memory-palace] Ready on :18791")
