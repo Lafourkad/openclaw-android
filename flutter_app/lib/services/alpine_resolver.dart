@@ -95,51 +95,73 @@ class AlpineResolver {
   }
 
   /// Parse raw APKINDEX.tar.gz bytes → map of package name → entry.
+  /// Also builds a `provides` map: so:libfoo.so.1 → package name.
   static Map<String, _ApkEntry> _parseApkIndex(List<int> bytes) {
-    // Decompress gzip
     final decompressed = GZipCodec().decode(bytes);
-
-    // Parse tar manually — APKINDEX.tar.gz contains two files: DESCRIPTION and APKINDEX
-    // We need the APKINDEX file content
     final apkindexContent = _extractFileFromTar(decompressed, 'APKINDEX');
     if (apkindexContent == null) throw 'APKINDEX not found in tar';
 
     final text = utf8.decode(apkindexContent);
     final result = <String, _ApkEntry>{};
+    // provides map: "so:libonig.so.5" → "oniguruma"
+    final provides = <String, String>{};
 
-    // Stanzas separated by blank lines
+    // First pass: collect all entries + their provides
     for (final stanza in text.split('\n\n')) {
       if (stanza.trim().isEmpty) continue;
-
       String? name, version;
-      final deps = <String>[];
+      final providesList = <String>[];
+      final rawDeps = <String>[];
 
       for (final line in stanza.split('\n')) {
         if (line.startsWith('P:')) name = line.substring(2).trim();
         if (line.startsWith('V:')) version = line.substring(2).trim();
+        if (line.startsWith('p:')) {
+          // provides: e.g. "so:libonig.so.5=6.9.9 cmd:jq"
+          for (final p in line.substring(2).trim().split(' ')) {
+            final key = p.split('=')[0].trim();
+            if (key.isNotEmpty) providesList.add(key);
+          }
+        }
         if (line.startsWith('D:')) {
-          for (final dep in line.substring(2).trim().split(' ')) {
-            final d = dep.trim();
-            if (d.isEmpty) continue;
-            // Skip: so:*, pc:*, !*, /bin/*, cmd:*
-            if (d.startsWith('so:') || d.startsWith('pc:') ||
-                d.startsWith('!') || d.startsWith('/') ||
-                d.startsWith('cmd:')) continue;
-            // Strip version constraints: dep=1.0 or dep>=1.0
-            final clean = d.split(RegExp(r'[=<>]'))[0].trim();
-            if (clean.isNotEmpty) deps.add(clean);
+          for (final d in line.substring(2).trim().split(' ')) {
+            if (d.trim().isNotEmpty) rawDeps.add(d.trim());
           }
         }
       }
 
       if (name != null && version != null) {
-        result[name] = _ApkEntry(
+        final entry = _ApkEntry(
           name: name,
           version: version,
           filename: '$name-$version.apk',
-          deps: deps,
+          rawDeps: rawDeps,
+          deps: [], // filled in second pass
         );
+        result[name] = entry;
+        for (final p in providesList) {
+          provides[p] = name;
+        }
       }
+    }
+
+    // Second pass: resolve deps including so: → package name via provides map
+    for (final entry in result.values) {
+      final resolved = <String>[];
+      for (final d in entry.rawDeps) {
+        if (d.startsWith('!') || d.startsWith('/') || d.startsWith('cmd:') || d.startsWith('pc:')) continue;
+        if (d.startsWith('so:')) {
+          // Resolve via provides map
+          final soKey = d.split('=')[0]; // strip version
+          final provider = provides[soKey];
+          if (provider != null && provider != entry.name) resolved.add(provider);
+          continue;
+        }
+        // Named dep — strip version constraint
+        final clean = d.split(RegExp(r'[=<>]'))[0].trim();
+        if (clean.isNotEmpty && clean != entry.name) resolved.add(clean);
+      }
+      entry.deps.addAll(resolved.toSet());
     }
 
     return result;
@@ -194,6 +216,7 @@ class _ApkEntry {
   final String name;
   final String version;
   final String filename;
-  final List<String> deps;
-  const _ApkEntry({required this.name, required this.version, required this.filename, required this.deps});
+  final List<String> rawDeps;
+  final List<String> deps; // resolved in second pass
+  _ApkEntry({required this.name, required this.version, required this.filename, required this.rawDeps, required this.deps});
 }
