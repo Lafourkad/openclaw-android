@@ -130,30 +130,43 @@ class MainActivity : FlutterActivity() {
                     }.start()
                 }
                 "readDashboardUrl" -> {
-                    // Build dashboard URL with Control UI token from openclaw.json
+                    // Find dashboard URL with token from gateway log files
                     Thread {
                         try {
-                            val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
-                            if (configFile.exists()) {
-                                val json = org.json.JSONObject(configFile.readText())
-                                // Try gateway.controlUi.token first
-                                val cuiToken = json.optJSONObject("gateway")
-                                    ?.optJSONObject("controlUi")
-                                    ?.optString("token", "")
-                                    ?.takeIf { it.isNotEmpty() }
-                                // Fallback: gateway auth token
-                                val authToken = json.optJSONObject("auth")
-                                    ?.optString("token", "")
-                                    ?.takeIf { it.isNotEmpty() }
-                                val token = cuiToken ?: authToken
-                                val url = if (token != null)
-                                    "http://localhost:18789/#token=$token"
-                                else
-                                    "http://localhost:18789"
-                                runOnUiThread { result.success(url) }
-                            } else {
-                                runOnUiThread { result.success("http://localhost:18789") }
+                            val tokenRegex = Regex("""https?://(?:localhost|127\.0\.0\.1):18789/#token=[0-9a-f]+""")
+                            var foundUrl: String? = null
+
+                            // Search in gateway log files (tmp dir)
+                            val tmpDir = java.io.File("$filesDir/tmp")
+                            tmpDir.walkTopDown()
+                                .filter { it.name.endsWith(".log") }
+                                .sortedByDescending { it.lastModified() }
+                                .take(3)
+                                .forEach { logFile ->
+                                    if (foundUrl != null) return@forEach
+                                    logFile.useLines { lines ->
+                                        lines.forEach { line ->
+                                            val m = tokenRegex.find(line)
+                                            if (m != null) foundUrl = m.value
+                                        }
+                                    }
+                                }
+
+                            // Fallback: use gateway auth token to build URL
+                            if (foundUrl == null) {
+                                val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
+                                if (configFile.exists()) {
+                                    val json = org.json.JSONObject(configFile.readText())
+                                    val authToken = json.optJSONObject("auth")
+                                        ?.optString("token", "")
+                                        ?.takeIf { it.isNotEmpty() }
+                                    if (authToken != null) {
+                                        foundUrl = "http://localhost:18789/#token=$authToken"
+                                    }
+                                }
                             }
+
+                            runOnUiThread { result.success(foundUrl ?: "http://localhost:18789") }
                         } catch (e: Exception) {
                             runOnUiThread { result.success("http://localhost:18789") }
                         }
