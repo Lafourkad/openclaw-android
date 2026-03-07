@@ -25,11 +25,14 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (_) {
+          onPageStarted: (_) async {
             if (mounted) setState(() => _loading = true);
+            // Inject WebSocket patch as early as possible
+            await _injectToken();
           },
           onPageFinished: (_) async {
             if (mounted) setState(() => _loading = false);
+            // Re-inject in case page reloaded after patch
             await _injectToken();
           },
           onWebResourceError: (error) {
@@ -48,23 +51,41 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
   Future<void> _injectToken() async {
     try {
       final token = await NativeBridge.readGatewayToken();
-      if (token.isEmpty) return;
-      // Inject token into the dashboard's localStorage and trigger connect
+      // Monkey-patch WebSocket so every connect frame includes:
+      // - clientId: 'openclaw-control-ui' (required for dangerouslyDisableDeviceAuth bypass)
+      // - token: <gateway token> (for sharedAuthOk)
+      final tokenJs = token.isNotEmpty ? '"$token"' : 'null';
       await _controller.runJavaScript('''
         (function() {
-          // Save token to localStorage so dashboard remembers it
-          localStorage.setItem('openclaw_gateway_token', '$token');
-          localStorage.setItem('gatewayToken', '$token');
-          // Try to find the token input and fill it
-          var inputs = document.querySelectorAll('input[type="text"], input[type="password"], input:not([type])');
-          inputs.forEach(function(inp) {
-            var label = inp.placeholder || inp.name || inp.id || '';
-            if (label.toLowerCase().includes('token') || label.includes('GATEWAY')) {
-              inp.value = '$token';
-              inp.dispatchEvent(new Event('input', {bubbles: true}));
-              inp.dispatchEvent(new Event('change', {bubbles: true}));
-            }
-          });
+          var _WS = window.WebSocket;
+          if (_WS.__patched) return;
+          function PatchedWS(url, protocols) {
+            var ws = protocols ? new _WS(url, protocols) : new _WS(url);
+            var _send = ws.send.bind(ws);
+            ws.send = function(data) {
+              try {
+                var msg = JSON.parse(data);
+                if (msg && msg.method === 'connect') {
+                  if (!msg.params) msg.params = {};
+                  msg.params.clientId = 'openclaw-control-ui';
+                  msg.params.clientVersion = '1.0.0';
+                  msg.params.clientMode = 'ui';
+                  var tok = $tokenJs || (window.location.hash.match(/#token=([^&]+)/)||[])[1];
+                  if (tok) msg.params.token = tok;
+                  data = JSON.stringify(msg);
+                }
+              } catch(e) {}
+              return _send(data);
+            };
+            return ws;
+          }
+          PatchedWS.__patched = true;
+          PatchedWS.prototype = _WS.prototype;
+          PatchedWS.CONNECTING = _WS.CONNECTING;
+          PatchedWS.OPEN = _WS.OPEN;
+          PatchedWS.CLOSING = _WS.CLOSING;
+          PatchedWS.CLOSED = _WS.CLOSED;
+          window.WebSocket = PatchedWS;
         })();
       ''');
     } catch (_) {}
