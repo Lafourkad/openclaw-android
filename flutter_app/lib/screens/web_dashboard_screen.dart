@@ -66,12 +66,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               try {
                 var msg = JSON.parse(data);
                 if (msg && msg.method === 'connect') {
-                  if (!msg.params) msg.params = {};
-                  msg.params.clientId = 'openclaw-control-ui';
-                  msg.params.clientVersion = '1.0.0';
-                  msg.params.clientMode = 'ui';
+                  // Control UI connect frame format:
+                  // params.auth.token — the shared gateway token
+                  // params.client.id  — should be 'openclaw-control-ui' (already set by dashboard JS)
                   var tok = $tokenJs || (window.location.hash.match(/#token=([^&]+)/)||[])[1];
-                  if (tok) msg.params.token = tok;
+                  if (tok) {
+                    if (!msg.params) msg.params = {};
+                    if (!msg.params.auth) msg.params.auth = {};
+                    // Only inject token if dashboard didn't already set one
+                    if (!msg.params.auth.token) msg.params.auth.token = tok;
+                  }
                   data = JSON.stringify(msg);
                 }
               } catch(e) {}
