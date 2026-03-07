@@ -211,6 +211,18 @@ class GatewayService : Service() {
                             seedWorkspaceTools(filesDir)
                             seedAgentIdentity(filesDir)
                             removeBootstrap(filesDir)
+                            // Log dashboard URL once token is available in config
+                            try {
+                                val cfg = File("$filesDir/.openclaw/openclaw.json")
+                                if (cfg.exists()) {
+                                    val cfgJson = org.json.JSONObject(cfg.readText())
+                                    val tok = cfgJson.optJSONObject("auth")?.optString("token","")?.takeIf { it.isNotEmpty() }
+                                    if (tok != null) {
+                                        Log.i("OpenclawGW", "http://localhost:18789/#token=$tok")
+                                        emitLog("http://localhost:18789/#token=$tok")
+                                    }
+                                }
+                            } catch (_: Exception) {}
                         }
                     } catch (_: Exception) {}
                 }.start()
