@@ -613,16 +613,10 @@ I'm $agentName — a personal AI assistant running on your phone.
             gw.put("controlUi", controlUi)
             obj.put("gateway", gw)
 
-            // Register Memory Palace HTTP plugin on :18791
-            // gateway schema: plugins = { "name": { type, url, ... } }
-            val pluginsObj = obj.optJSONObject("plugins") ?: org.json.JSONObject()
-            if (!pluginsObj.has("memory-palace-android")) {
-                pluginsObj.put("memory-palace-android", org.json.JSONObject().apply {
-                    put("type", "http")
-                    put("url", "http://localhost:18791")
-                })
-                obj.put("plugins", pluginsObj)
-                Log.i("OpenclawGW", "Registered Memory Palace plugin at :18791")
+            // Clean up invalid plugins key if it was previously written
+            if (obj.has("plugins")) {
+                obj.remove("plugins")
+                Log.i("OpenclawGW", "Removed invalid plugins key from config")
             }
 
             // Migrate legacy agent.* → agents.defaults.*
