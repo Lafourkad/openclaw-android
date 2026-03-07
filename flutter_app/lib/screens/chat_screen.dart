@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -245,6 +248,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   // ---------------------------------------------------------------------------
+  // File attachment
+  // ---------------------------------------------------------------------------
+
+  Future<void> _pickAndSendFile(BuildContext context, dynamic ctrl) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = File(result.files.single.path!);
+    final name = result.files.single.name;
+    final ext = name.split('.').last.toLowerCase();
+    final isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(ext);
+
+    final bytes = await file.readAsBytes();
+    final b64 = base64Encode(bytes);
+    final mime = isImage ? 'image/$ext' : 'application/octet-stream';
+
+    // Send as a message with embedded base64 attachment
+    final msg = isImage
+        ? '[image:$name]\ndata:$mime;base64,$b64'
+        : '[file:$name]\ndata:$mime;base64,$b64';
+
+    ctrl.sendMessage(msg);
+  }
+
+  // ---------------------------------------------------------------------------
   // Dispose
   // ---------------------------------------------------------------------------
 
@@ -461,13 +493,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               color: isDark
                                   ? Colors.white54
                                   : Colors.black45),
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content:
-                                      Text('File attachments coming soon')),
-                            );
-                          },
+                          onPressed: ctrl.sending ? null : () => _pickAndSendFile(context, ctrl),
                         ),
                         // Input field
                         Expanded(

@@ -689,6 +689,41 @@ I'm $agentName — a personal AI assistant running on your phone.
             gatewayProcess = null
         }
         emitLog("Gateway stopped by user")
+        autoBackup()
+    }
+
+    private fun autoBackup() {
+        try {
+            val filesDir = applicationContext.filesDir.absolutePath
+            val dlDir = android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS
+            ).absolutePath
+            val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(java.util.Date())
+            val backupPath = "$dlDir/openclaw-backup-$timestamp.tar.gz"
+
+            // Only backup config + workspace (not binaries)
+            val result = ProcessBuilder(
+                "/system/bin/tar", "-czf", backupPath,
+                "-C", filesDir,
+                ".openclaw/openclaw.json",
+                ".openclaw/workspace"
+            ).apply {
+                redirectErrorStream(true)
+            }.start()
+            result.waitFor()
+
+            // Keep only last 3 backups
+            val dl = java.io.File(dlDir)
+            dl.listFiles { f -> f.name.matches(Regex("openclaw-backup-.*\\.tar\\.gz")) }
+                ?.sortedByDescending { it.name }
+                ?.drop(3)
+                ?.forEach { it.delete() }
+
+            Log.i("OpenclawGW", "Auto-backup written to $backupPath")
+        } catch (e: Exception) {
+            Log.w("OpenclawGW", "Auto-backup failed: $e")
+        }
     }
 
     private fun startUptimeTicker() {

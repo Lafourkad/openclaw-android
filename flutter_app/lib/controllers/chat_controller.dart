@@ -1,11 +1,44 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
 import '../services/native_bridge.dart';
 import '../services/gateway_websocket.dart';
+
+// ---------------------------------------------------------------------------
+// AttachmentInfo — metadata carried with a message
+// ---------------------------------------------------------------------------
+
+class AttachmentInfo {
+  final String fileName;
+  final String mimeType;
+  final bool isImage;
+
+  /// Resolved local path for display purposes (may be null for agent messages).
+  final String? localPath;
+
+  const AttachmentInfo({
+    required this.fileName,
+    required this.mimeType,
+    required this.isImage,
+    this.localPath,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'fileName': fileName,
+        'mimeType': mimeType,
+        'isImage': isImage,
+      };
+
+  factory AttachmentInfo.fromJson(Map<String, dynamic> j) => AttachmentInfo(
+        fileName: j['fileName'] as String? ?? 'file',
+        mimeType: j['mimeType'] as String? ?? 'application/octet-stream',
+        isImage: j['isImage'] as bool? ?? false,
+      );
+}
 
 // ---------------------------------------------------------------------------
 // ChatMessage — public, so ChatScreen can read it
@@ -19,6 +52,9 @@ class ChatMessage {
   bool isError;
   final DateTime? time;
 
+  /// Optional attachment metadata.
+  AttachmentInfo? attachment;
+
   ChatMessage({
     required this.text,
     required this.isUser,
@@ -26,6 +62,7 @@ class ChatMessage {
     this.thinkingCollapsed = true,
     this.isError = false,
     this.time,
+    this.attachment,
   });
 
   Map<String, dynamic> toJson() => {
@@ -34,6 +71,7 @@ class ChatMessage {
         'isError': isError,
         if (thinking.isNotEmpty) 'thinking': thinking,
         'time': time?.toIso8601String(),
+        if (attachment != null) 'attachment': attachment!.toJson(),
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
@@ -42,6 +80,9 @@ class ChatMessage {
         isError: j['isError'] as bool? ?? false,
         thinking: j['thinking'] as String? ?? '',
         time: j['time'] != null ? DateTime.tryParse(j['time'] as String) : null,
+        attachment: j['attachment'] != null
+            ? AttachmentInfo.fromJson(j['attachment'] as Map<String, dynamic>)
+            : null,
       );
 }
 
