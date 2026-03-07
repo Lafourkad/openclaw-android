@@ -621,19 +621,16 @@ I'm $agentName — a personal AI assistant running on your phone.
             val text = configFile.readText()
             val obj = org.json.JSONObject(text)
 
-            // gateway.mode = local + auth.mode = none (loopback-only, no token needed)
+            // gateway.mode = local + Control UI: disable device identity check
             val gw = obj.optJSONObject("gateway") ?: org.json.JSONObject()
             if (!gw.has("mode")) gw.put("mode", "local")
-            val authCfg = gw.optJSONObject("auth") ?: org.json.JSONObject()
-            authCfg.put("mode", "none")
-            gw.put("auth", authCfg)
-            // Control UI: disable device identity check
+            // NOTE: do NOT set auth.mode=none — it breaks sharedAuthOk which is required for the bypass
             val controlUi = gw.optJSONObject("controlUi") ?: org.json.JSONObject()
             controlUi.put("dangerouslyDisableDeviceAuth", true)
             controlUi.put("allowInsecureAuth", true)
             gw.put("controlUi", controlUi)
             obj.put("gateway", gw)
-            Log.i("OpenclawGW", "patchConfig: gateway.auth.mode=none set (loopback, no token required)")
+            Log.i("OpenclawGW", "patchConfig: dangerouslyDisableDeviceAuth=true set")
 
             // Clean up invalid plugins key if it was previously written
             if (obj.has("plugins")) {
