@@ -100,6 +100,15 @@ class GatewayService {
           ));
         }
       }
+
+      // Read dashboard URL with Control UI token from config
+      final dashboardUrl = await NativeBridge.readDashboardUrl();
+      if (dashboardUrl.isNotEmpty) {
+        final prefs = PreferencesService();
+        await prefs.init();
+        prefs.dashboardUrl = dashboardUrl;
+        _updateState(_state.copyWith(dashboardUrl: dashboardUrl));
+      }
     } catch (_) {}
   }
 

@@ -129,6 +129,36 @@ class MainActivity : FlutterActivity() {
                         }
                     }.start()
                 }
+                "readDashboardUrl" -> {
+                    // Build dashboard URL with Control UI token from openclaw.json
+                    Thread {
+                        try {
+                            val configFile = java.io.File("$filesDir/.openclaw/openclaw.json")
+                            if (configFile.exists()) {
+                                val json = org.json.JSONObject(configFile.readText())
+                                // Try gateway.controlUi.token first
+                                val cuiToken = json.optJSONObject("gateway")
+                                    ?.optJSONObject("controlUi")
+                                    ?.optString("token", "")
+                                    ?.takeIf { it.isNotEmpty() }
+                                // Fallback: gateway auth token
+                                val authToken = json.optJSONObject("auth")
+                                    ?.optString("token", "")
+                                    ?.takeIf { it.isNotEmpty() }
+                                val token = cuiToken ?: authToken
+                                val url = if (token != null)
+                                    "http://localhost:18789/#token=$token"
+                                else
+                                    "http://localhost:18789"
+                                runOnUiThread { result.success(url) }
+                            } else {
+                                runOnUiThread { result.success("http://localhost:18789") }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.success("http://localhost:18789") }
+                        }
+                    }.start()
+                }
                 "getBootstrapStatus" -> {
                     result.success(bootstrapManager.getBootstrapStatus())
                 }

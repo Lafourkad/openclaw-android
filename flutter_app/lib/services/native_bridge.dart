@@ -282,4 +282,8 @@ class NativeBridge {
   static Future<String> readGatewayToken() async {
     return await _channel.invokeMethod<String>('readGatewayToken') ?? '';
   }
+
+  static Future<String> readDashboardUrl() async {
+    return await _channel.invokeMethod<String>('readDashboardUrl') ?? 'http://localhost:18789';
+  }
 }
