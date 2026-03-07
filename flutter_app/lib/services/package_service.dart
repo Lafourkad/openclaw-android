@@ -72,11 +72,13 @@ class PackageService {
     try {
       final result = await Process.run(
         wrapperPath,
-        ['-version'],
+        ['--version'],
         environment: {'PATH': '$binDir:/system/bin'},
       ).timeout(const Duration(seconds: 5));
-      // Some tools return 0, some return 1 for --version but still produce output
-      return result.exitCode == 0 || result.stdout.toString().isNotEmpty;
+      // Some tools return 0, some return 1/2 for --version but still produce output
+      return result.exitCode == 0 || 
+             result.stdout.toString().isNotEmpty ||
+             result.stderr.toString().isNotEmpty;
     } catch (_) {
       // Binary exists but can't execute — probably missing libs
       return false;

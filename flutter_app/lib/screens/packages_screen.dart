@@ -118,9 +118,14 @@ class _PackagesScreenState extends State<PackagesScreen> {
         if (File(src).existsSync()) {
           // Make executable
           await Process.run('/system/bin/chmod', ['+x', src]);
-          // Create wrapper script
+          // Create wrapper script that uses glibc ld-linux
+          final ldso = '${await NativeBridge.getNativeLibDir()}/libld_aarch64.so';
+          final glibcLib = '$_filesDir/glibc/lib';
           final wrapper = File(dst);
-          await wrapper.writeAsString('#!/system/bin/sh\nexec $src "\$@"\n');
+          await wrapper.writeAsString(
+            '#!/system/bin/sh\n'
+            'exec $ldso --library-path $glibcLib $src "\$@"\n'
+          );
           await Process.run('/system/bin/chmod', ['+x', dst]);
         }
       }
