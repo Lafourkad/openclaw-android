@@ -361,6 +361,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_currentRunId != null && runId != null && runId != _currentRunId) return;
 
     if (state == 'delta') {
+      // Streaming is handled by the 'agent' event handler (token by token).
+      // 'chat' delta arrives with full accumulated text — skip to avoid overwriting
+      // smooth streaming with a sudden full-text replacement.
+    } else if (state == 'final') {
+      // On final, sync the definitive text from gateway (handles edge cases where
+      // agent streaming missed tokens or arrived out of order)
       final messageData = payload['message'];
       if (messageData is Map) {
         final content = messageData['content'];
@@ -371,15 +377,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
           if (textEntry != null) {
             final fullText = textEntry['text'] as String? ?? '';
-            // Update the last assistant message
-            if (_messages.isNotEmpty && !_messages.last.isUser) {
-              setState(() => _messages.last.text = fullText);
-              _scrollToBottom();
-            }
+            setState(() {
+              _sending = false;
+              _currentRunId = null;
+              if (fullText.isNotEmpty && _messages.isNotEmpty && !_messages.last.isUser) {
+                _messages.last.text = fullText;
+              }
+            });
+            _saveHistory();
+            return;
           }
         }
       }
-    } else if (state == 'final') {
       setState(() {
         _sending = false;
         _currentRunId = null;
