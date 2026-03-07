@@ -93,12 +93,11 @@ class GatewayService {
       if (token.isNotEmpty) {
         final prefs = PreferencesService();
         await prefs.init();
-        if ((prefs.nodeGatewayToken ?? '').isEmpty) {
-          prefs.nodeGatewayToken = token;
-          _updateState(_state.copyWith(
-            logs: [..._state.logs, '[INFO] Gateway token auto-saved to settings'],
-          ));
-        }
+        // Always overwrite — token changes on every fresh install
+        prefs.nodeGatewayToken = token;
+        _updateState(_state.copyWith(
+          logs: [..._state.logs, '[INFO] Gateway token updated'],
+        ));
       }
 
       // Debug: dump config keys to logcat
