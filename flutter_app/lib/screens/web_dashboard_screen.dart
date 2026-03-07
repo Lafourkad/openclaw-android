@@ -83,11 +83,18 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
   Future<void> _loadUrl() async {
     var url = widget.url;
+    // Fallback 1: saved URL in preferences
     if (url == null || url.isEmpty) {
-      // Fallback: load saved token URL from preferences
       final prefs = PreferencesService();
       await prefs.init();
       url = prefs.dashboardUrl;
+    }
+    // Fallback 2: build URL from token in config file (works even before log capture)
+    if (url == null || !url.contains('#token=')) {
+      final token = await NativeBridge.readGatewayToken();
+      if (token.isNotEmpty) {
+        url = 'http://localhost:18789/#token=$token';
+      }
     }
     _controller.loadRequest(Uri.parse(url ?? AppConstants.gatewayUrl));
   }
