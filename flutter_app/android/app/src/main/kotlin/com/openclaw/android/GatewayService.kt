@@ -614,19 +614,14 @@ I'm $agentName — a personal AI assistant running on your phone.
             obj.put("gateway", gw)
 
             // Register Memory Palace HTTP plugin on :18791
-            val pluginsArr = obj.optJSONArray("plugins") ?: org.json.JSONArray()
-            var hasPalace = false
-            for (i in 0 until pluginsArr.length()) {
-                val p = pluginsArr.optJSONObject(i)
-                if (p?.optString("url") == "http://localhost:18791") { hasPalace = true; break }
-            }
-            if (!hasPalace) {
-                pluginsArr.put(org.json.JSONObject().apply {
+            // gateway schema: plugins = { "name": { type, url, ... } }
+            val pluginsObj = obj.optJSONObject("plugins") ?: org.json.JSONObject()
+            if (!pluginsObj.has("memory-palace-android")) {
+                pluginsObj.put("memory-palace-android", org.json.JSONObject().apply {
                     put("type", "http")
                     put("url", "http://localhost:18791")
-                    put("name", "memory-palace-android")
                 })
-                obj.put("plugins", pluginsArr)
+                obj.put("plugins", pluginsObj)
                 Log.i("OpenclawGW", "Registered Memory Palace plugin at :18791")
             }
 
