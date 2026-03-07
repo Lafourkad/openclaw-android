@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../app.dart';
 import '../../services/config_generator.dart';
 import '../../services/native_bridge.dart';
+import '../../services/preferences_service.dart';
 import '../chat_screen.dart';
 
 class SummaryStep extends StatefulWidget {
@@ -45,6 +47,18 @@ class _SummaryStepState extends State<SummaryStep> {
           : 'assistant';
 
       final configPath = await ConfigGenerator.writeConfig(widget.config);
+
+      // Store gateway token in preferences so the node service can find it
+      final configJson = ConfigGenerator.generate(widget.config);
+      final gwToken = (configJson['gateway'] as Map?)?['auth']?['token'] as String?;
+      if (gwToken != null && gwToken.isNotEmpty) {
+        final prefs = PreferencesService();
+        await prefs.init();
+        prefs.nodeGatewayToken = gwToken;
+        // Also store for chat screen's WebSocket connection
+        final sp = await SharedPreferences.getInstance();
+        await sp.setString('gateway_token', gwToken);
+      }
 
       // Start gateway
       await NativeBridge.startGateway();

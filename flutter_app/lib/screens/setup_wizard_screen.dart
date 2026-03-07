@@ -7,6 +7,7 @@ import '../models/optional_package.dart';
 import '../providers/setup_provider.dart';
 import '../services/package_service.dart';
 import '../widgets/progress_step.dart';
+import '../widgets/mascot_animation.dart';
 import 'onboarding_screen.dart';
 
 class SetupWizardScreen extends StatefulWidget {
@@ -89,7 +90,16 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                   Expanded(
                     child: _phase == 'select'
                         ? _buildPackageSelection(theme, isDark)
-                        : _buildSteps(state, theme, isDark),
+                        : Stack(
+                            children: [
+                              _buildSteps(state, theme, isDark),
+                              // Mascot animation during installation
+                              if (_started && !state.isComplete && !state.isCoreComplete && !state.hasError)
+                                const Positioned.fill(
+                                  child: MascotAnimation(size: 130),
+                                ),
+                            ],
+                          ),
                   ),
                   if (state.hasError) ...[
                     _buildErrorBox(state, theme),

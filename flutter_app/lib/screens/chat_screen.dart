@@ -3,8 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+
 import '../app.dart';
 import '../services/native_bridge.dart';
+import '../services/gateway_websocket.dart';
 import 'dashboard_screen.dart';
 import 'file_browser_screen.dart';
 import 'packages_screen.dart';
@@ -13,9 +18,11 @@ import 'logs_screen.dart';
 import 'backup_screen.dart';
 import 'agents_screen.dart';
 import 'settings/settings_main_screen.dart';
+import '../widgets/mascot_animation.dart';
+import '../widgets/mini_mascot.dart';
 
-/// Chat with the OpenClaw agent via HTTP /v1/chat/completions (SSE streaming).
-/// Full agent pipeline — SOUL.md, tools, memory, skills all active.
+/// Chat with the OpenClaw agent via Gateway WebSocket (full agent pipeline).
+/// SOUL.md, tools, memory, skills — all active through the controlUi protocol.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -24,31 +31,218 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  static const _loadingQuotes = [
+    '✂️ Sharpening the claws...',
+    '🧠 Loading brain cells...',
+    '🔧 Tightening bolts...',
+    '📡 Establishing neural link...',
+    '🌊 Rising from the deep...',
+    '⚡ Warming up circuits...',
+    '🗝️ Unlocking the vault...',
+    '🎯 Calibrating responses...',
+    '🚀 Fueling the engines...',
+    '🧬 Assembling DNA...',
+    '🔮 Consulting the oracle...',
+    '🏗️ Building context...',
+    '🎭 Putting on my face...',
+    '📚 Speed-reading manuals...',
+    '🦾 Flexing servos...',
+    '🧪 Mixing the potions...',
+    '☕ Brewing first coffee...',
+    '🪐 Downloading the universe...',
+    '🎪 Setting up the stage...',
+    '🔬 Focusing the lens...',
+  ];
   bool _appInForeground = true;
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late String _loadingQuote;
   final List<_ChatMessage> _messages = [];
 
   bool _sending = false;
-  bool _ready = false; // true once gateway is up and ready
-  String _streamBuffer = '';
+  bool _ready = false;
   String? _filesDir;
   int _port = 18789;
   String? _gatewayToken;
+  String _agentName = 'OpenClaw';
   bool _showScrollFab = false;
-  bool _endpointChecked = false;
+
+  GatewayWebSocket? _ws;
+  StreamSubscription<GatewayEvent>? _eventSub;
+  StreamSubscription<bool>? _connSub;
+  String? _currentRunId;
+  bool _wsConnected = false;
+  Timer? _quoteTimer;
+  double _quoteOpacity = 1.0;
+  late List<String> _shuffledQuotes;
+  int _quoteIndex = 0;
+
+  // Voice input/output
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  bool _speechAvailable = false;
 
   @override
   void initState() {
     super.initState();
+    _shuffledQuotes = _loadingQuotes.toList()..shuffle();
+    _loadingQuote = _shuffledQuotes[0];
+    _startQuoteRotation();
+    _initSpeech();
+    _inputController.addListener(() => setState(() {})); // Rebuild for mic/send icon switch
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
     _init();
   }
 
+  Future<void> _initSpeech() async {
+    _speechAvailable = await _speech.initialize(
+      onError: (error) {
+        setState(() => _isListening = false);
+      },
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          setState(() => _isListening = false);
+          // Auto-send if we got text
+          if (_inputController.text.isNotEmpty) {
+            _send();
+          }
+        }
+      },
+    );
+  }
+
+  Future<void> _toggleListening() async {
+    if (!_speechAvailable) return;
+
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
+    } else {
+      setState(() => _isListening = true);
+      await _speech.listen(
+        onResult: (result) {
+          setState(() {
+            _inputController.text = result.recognizedWords;
+            _inputController.selection = TextSelection.fromPosition(
+              TextPosition(offset: _inputController.text.length),
+            );
+          });
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3),
+        localeId: 'en_US',
+      );
+    }
+  }
+
+  void _startQuoteRotation() {
+    _quoteTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (!mounted || _ready) {
+        _quoteTimer?.cancel();
+        return;
+      }
+      // Fade out
+      setState(() => _quoteOpacity = 0.0);
+      // After fade out, change quote and fade in
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        _quoteIndex = (_quoteIndex + 1) % _shuffledQuotes.length;
+        setState(() {
+          _loadingQuote = _shuffledQuotes[_quoteIndex];
+          _quoteOpacity = 1.0;
+        });
+      });
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasBackground = !_appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed) {
+      if (_ws != null && !_ws!.connected) {
+        _ws!.connect();
+      }
+      // Reload history in case agent responded while we were in background
+      if (wasBackground) {
+        _refreshFromHistory();
+      }
+    }
+  }
+
+  /// Reload messages from gateway history (e.g. after returning from background)
+  /// Only appends new messages — never clears existing ones
+  Future<void> _refreshFromHistory() async {
+    if (_ws == null || !_ws!.connected) return;
+    try {
+      final messages = await _ws!.chatHistory(limit: 100);
+      if (messages.isEmpty || !mounted) return;
+
+      // Build list of new messages from gateway
+      final gatewayMessages = <_ChatMessage>[];
+      for (final m in messages) {
+        if (m is! Map) continue;
+        final role = m['role'] as String? ?? '';
+        final content = m['content'];
+        String text = '';
+        if (content is String) {
+          text = content;
+        } else if (content is List) {
+          text = content
+              .where((c) => c is Map && c['type'] == 'text')
+              .map((c) => c['text'] as String? ?? '')
+              .join('\n');
+        }
+        if (text.isEmpty) continue;
+        // Filter internal/system messages
+        if (role == 'user' && text.contains('just installed this app')) continue;
+        if (role == 'user' && text.contains('[system:hatch]')) continue;
+        if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') continue;
+        if (role == 'user' && text.contains('Heartbeat prompt:')) continue;
+        if (role == 'user' || role == 'assistant') {
+          gatewayMessages.add(_ChatMessage(
+            text: text,
+            isUser: role == 'user',
+            time: DateTime.now(),
+          ));
+        }
+      }
+
+      // Only update if gateway has more messages than we have locally
+      if (gatewayMessages.length > _messages.length) {
+        final oldCount = _messages.length;
+        setState(() {
+          _messages.clear();
+          _messages.addAll(gatewayMessages);
+          _sending = false;
+          _currentRunId = null;
+        });
+        _scrollToBottom();
+        _saveHistory();
+
+        // Notify about new messages
+        if (_messages.length > oldCount && _messages.isNotEmpty && !_messages.last.isUser) {
+          final text = _messages.last.text;
+          if (text.isNotEmpty) {
+            final preview = text.length > 100 ? '${text.substring(0, 100)}…' : text;
+            NativeBridge.sendChatNotification(_agentName, preview);
+          }
+        }
+      } else if (_sending) {
+        // If we were waiting for a response, check if it arrived
+        final lastGw = gatewayMessages.isNotEmpty ? gatewayMessages.last : null;
+        if (lastGw != null && !lastGw.isUser && _messages.isNotEmpty && _messages.last.text.isEmpty) {
+          setState(() {
+            _messages.last.text = lastGw.text;
+            _sending = false;
+            _currentRunId = null;
+          });
+          _scrollToBottom();
+          _saveHistory();
+        }
+      }
+    } catch (_) {}
   }
 
   void _onScroll() {
@@ -63,34 +257,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _init() async {
     _filesDir = await NativeBridge.getFilesDir();
     await _loadConfig();
-    await _loadHistory();
-    await _ensureReady();
+    await _ensureGatewayRunning();
+    _connectWebSocket();
   }
 
-  /// Silently ensure the backend is running. User sees a gentle loading state.
-  Future<void> _ensureReady() async {
-    // Quick check — is it already up?
-    if (await _isBackendUp()) {
-      setState(() => _ready = true);
-      return;
-    }
+  Future<void> _ensureGatewayRunning() async {
+    // Try a quick HTTP health check
+    if (await _isBackendUp()) return;
 
-    // Not up — start it silently
-    try {
-      await NativeBridge.startGateway();
-    } catch (_) {}
+    // Not up — start it
+    try { await NativeBridge.startGateway(); } catch (_) {}
 
-    // Poll until ready (max ~15s)
-    for (int i = 0; i < 15; i++) {
+    // Poll until ready (max ~20s)
+    for (int i = 0; i < 20; i++) {
       await Future.delayed(const Duration(seconds: 1));
-      if (await _isBackendUp()) {
-        if (mounted) setState(() => _ready = true);
-        return;
-      }
+      if (await _isBackendUp()) return;
     }
-
-    // Still not ready after 15s — let user try anyway
-    if (mounted) setState(() => _ready = true);
   }
 
   Future<bool> _isBackendUp() async {
@@ -101,13 +283,139 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         Uri.parse('http://127.0.0.1:$_port/v1/chat/completions'),
       );
       request.headers.set('Content-Type', 'application/json');
-      // Just check if we get a response (even 405 means it's up)
       final response = await request.close().timeout(const Duration(seconds: 3));
       await response.drain();
       client.close();
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  void _connectWebSocket() {
+    _ws = GatewayWebSocket(
+      host: '127.0.0.1',
+      port: _port,
+      token: _gatewayToken,
+      sessionKey: 'agent:main:main',
+    );
+
+    _connSub = _ws!.connectionState.listen((connected) {
+      if (mounted) {
+        setState(() => _wsConnected = connected);
+        if (connected && !_ready) {
+          _onFirstConnect();
+        }
+      }
+    });
+
+    _eventSub = _ws!.events.listen(_onGatewayEvent);
+    _ws!.connect();
+  }
+
+  Future<void> _onFirstConnect() async {
+    setState(() => _ready = true);
+
+    // Load history from gateway
+    await _loadHistory();
+
+    // The config file is the sole source of truth for agent name.
+    // Do NOT use agentIdentity() — the gateway often returns "assistant"
+    // which overwrites the user's chosen name.
+
+    // Welcome message on first ever launch
+    if (_messages.isEmpty) {
+      await _sendWelcome();
+    }
+  }
+
+  void _onGatewayEvent(GatewayEvent evt) {
+    final payload = evt.payload;
+    if (payload == null || payload is! Map) return;
+
+    // Handle agent events (streaming text from assistant + thinking)
+    if (evt.event == 'agent') {
+      final stream = payload['stream'] as String?;
+      final data = payload['data'];
+      if (data is Map && _messages.isNotEmpty && !_messages.last.isUser) {
+        final text = data['text'] as String?;
+        if (stream == 'thinking' && text != null && text.isNotEmpty) {
+          setState(() => _messages.last.thinking = text);
+          _scrollToBottom();
+        } else if (stream == 'assistant' && text != null && text.isNotEmpty) {
+          // Filter internal messages
+          if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') return;
+          setState(() => _messages.last.text = text);
+          _scrollToBottom();
+        }
+      }
+      return;
+    }
+
+    if (evt.event != 'chat') return;
+
+    final state = payload['state'] as String?;
+    final runId = payload['runId'] as String?;
+
+    // Only handle events for our current run
+    if (_currentRunId != null && runId != null && runId != _currentRunId) return;
+
+    if (state == 'delta') {
+      final messageData = payload['message'];
+      if (messageData is Map) {
+        final content = messageData['content'];
+        if (content is List && content.isNotEmpty) {
+          final textEntry = content.firstWhere(
+            (c) => c is Map && c['type'] == 'text',
+            orElse: () => null,
+          );
+          if (textEntry != null) {
+            final fullText = textEntry['text'] as String? ?? '';
+            // Update the last assistant message
+            if (_messages.isNotEmpty && !_messages.last.isUser) {
+              setState(() => _messages.last.text = fullText);
+              _scrollToBottom();
+            }
+          }
+        }
+      }
+    } else if (state == 'final') {
+      setState(() {
+        _sending = false;
+        _currentRunId = null;
+      });
+      _saveHistory();
+
+
+
+      // Background notification
+      if (!_appInForeground && _messages.isNotEmpty && !_messages.last.isUser) {
+        final text = _messages.last.text;
+        if (text.isNotEmpty) {
+          final preview = text.length > 100 ? '${text.substring(0, 100)}…' : text;
+          NativeBridge.sendChatNotification(_agentName, preview);
+        }
+      }
+    } else if (state == 'aborted') {
+      setState(() {
+        _sending = false;
+        _currentRunId = null;
+        if (_messages.isNotEmpty && !_messages.last.isUser && _messages.last.text.isEmpty) {
+          _messages.last.text = '(Aborted)';
+          _messages.last.isError = true;
+        }
+      });
+    } else if (state == 'error') {
+      setState(() {
+        _sending = false;
+        _currentRunId = null;
+        if (_messages.isNotEmpty && !_messages.last.isUser) {
+          if (_messages.last.text.isEmpty) {
+            _messages.last.text = '❌ Error from agent';
+          }
+          _messages.last.isError = true;
+        }
+      });
     }
   }
 
@@ -118,11 +426,69 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
         _gatewayToken = config['gateway']?['auth']?['token'] as String?;
         _port = config['gateway']?['port'] as int? ?? 18789;
+        // Read agent name from first agent in list
+        final agentsList = config['agents']?['list'] as List?;
+        if (agentsList != null && agentsList.isNotEmpty) {
+          final name = (agentsList[0] as Map?)?['name'] as String?;
+          debugPrint('OpenClaw: agent name from config = "$name"');
+          if (name != null && name.isNotEmpty && name != 'assistant') {
+            _agentName = name;
+          } else if (name != null && name.isNotEmpty) {
+            // Even "assistant" is better than "OpenClaw"
+            _agentName = name;
+          }
+        } else {
+          debugPrint('OpenClaw: no agents list in config!');
+        }
       }
     } catch (_) {}
   }
 
   Future<void> _loadHistory() async {
+    if (_ws == null || !_ws!.connected) return;
+    try {
+      final messages = await _ws!.chatHistory(limit: 100);
+      if (messages.isNotEmpty && mounted) {
+        setState(() {
+          _messages.clear();
+          for (final m in messages) {
+            if (m is! Map) continue;
+            final role = m['role'] as String? ?? '';
+            final content = m['content'];
+            String text = '';
+            if (content is String) {
+              text = content;
+            } else if (content is List) {
+              // Multi-part content — extract text parts
+              text = content
+                  .where((c) => c is Map && c['type'] == 'text')
+                  .map((c) => c['text'] as String? ?? '')
+                  .join('\n');
+            }
+            if (text.isEmpty) continue;
+            // Hide internal/system messages from history
+            if (role == 'user' && text.contains('just installed this app')) continue;
+            if (role == 'user' && text.contains('[system:hatch]')) continue;
+            if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') continue;
+            if (role == 'user' && text.contains('Heartbeat prompt:')) continue;
+            if (role == 'user' || role == 'assistant') {
+              _messages.add(_ChatMessage(
+                text: text,
+                isUser: role == 'user',
+                time: DateTime.now(), // Gateway doesn't provide timestamps in history
+              ));
+            }
+          }
+        });
+        _scrollToBottom();
+      }
+    } catch (_) {
+      // Fall back to local history
+      _loadLocalHistory();
+    }
+  }
+
+  void _loadLocalHistory() {
     try {
       final histFile = File('$_filesDir/.openclaw/chat_history.json');
       if (histFile.existsSync()) {
@@ -146,50 +512,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  List<Map<String, String>> _buildContext() {
-    final recent = _messages.length > 20 ? _messages.sublist(_messages.length - 20) : _messages;
-    return recent
-        .where((m) => !m.isError)
-        .map((m) => {
-              'role': m.isUser ? 'user' : 'assistant',
-              'content': m.text,
-            })
-        .toList();
-  }
+  Future<void> _sendWelcome() async {
+    if (_ws == null || !_ws!.connected) return;
 
-  /// Auto-enable chatCompletions endpoint if 404.
-  Future<void> _ensureEndpointEnabled() async {
+    // Add ONLY the assistant placeholder — the hatching prompt is invisible to the user
+    final assistantMsg = _ChatMessage(text: '', isUser: false, time: DateTime.now());
+    setState(() {
+      _sending = true;
+      _messages.add(assistantMsg);
+    });
+
     try {
-      final configFile = File('$_filesDir/.openclaw/openclaw.json');
-      if (!configFile.existsSync()) return;
-      final config = json.decode(configFile.readAsStringSync()) as Map<String, dynamic>;
-      bool changed = false;
-
-      config.putIfAbsent('gateway', () => <String, dynamic>{});
-      final gw = config['gateway'] as Map<String, dynamic>;
-      gw.putIfAbsent('http', () => <String, dynamic>{});
-      final http = gw['http'] as Map<String, dynamic>;
-      http.putIfAbsent('endpoints', () => <String, dynamic>{});
-      final endpoints = http['endpoints'] as Map<String, dynamic>;
-
-      if (endpoints['chatCompletions']?['enabled'] != true) {
-        endpoints['chatCompletions'] = {'enabled': true};
-        changed = true;
-      }
-
-      if (gw['auth']?['token'] == null) {
-        gw['auth'] = {'mode': 'token', 'token': 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}'};
-        _gatewayToken = gw['auth']['token'] as String;
-        changed = true;
-      }
-
-      if (changed) {
-        configFile.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
-        try { await NativeBridge.restartGateway(); } catch (_) {}
-        await Future.delayed(const Duration(seconds: 3));
-        await _loadConfig();
-      }
-    } catch (_) {}
+      _currentRunId = await _ws!.chatSend(
+        '[system:hatch] You just hatched. This is your first conversation ever. Your name is $_agentName.\n'
+        'Introduce yourself briefly, then ask your owner the standard onboarding questions one at a time:\n'
+        '1. What\'s your name?\n'
+        '2. What should I call you?\n'
+        '3. What timezone are you in?\n'
+        '4. Any preferences for how I should communicate? (language, tone, etc.)\n'
+        'Start with a warm greeting and the first question. Keep it natural — don\'t list all questions at once.\n'
+        'After you\'ve gathered the answers, write them to ~/.openclaw/workspace/USER.md.\n'
+        'Also fill in ~/.openclaw/workspace/IDENTITY.md with your own identity (name, creature type, vibe, emoji).',
+      );
+      // Safety timeout — if no response in 60s, show fallback
+      Future.delayed(const Duration(seconds: 60), () {
+        if (_sending && mounted) {
+          setState(() {
+            if (assistantMsg.text.isEmpty) {
+              assistantMsg.text = 'Hey! 👋 I\'m $_agentName. Ask me anything.';
+            }
+            _sending = false;
+            _currentRunId = null;
+          });
+          _saveHistory();
+        }
+      });
+    } catch (e) {
+      setState(() {
+        assistantMsg.text = 'Hey! 👋 I\'m $_agentName. Ask me anything.';
+        _sending = false;
+        _currentRunId = null;
+      });
+      _saveHistory();
+    }
   }
 
   Future<void> _send() async {
@@ -199,108 +564,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _inputController.clear();
 
     final userMsg = _ChatMessage(text: text, isUser: true, time: DateTime.now());
+    final assistantMsg = _ChatMessage(text: '', isUser: false, time: DateTime.now());
     setState(() {
       _messages.add(userMsg);
+      _messages.add(assistantMsg);
       _sending = true;
-      _streamBuffer = '';
     });
     _scrollToBottom();
 
-    final assistantMsg = _ChatMessage(text: '', isUser: false, time: DateTime.now());
-    setState(() => _messages.add(assistantMsg));
-
     try {
-      final context = _buildContext();
-      if (context.isNotEmpty && context.last['content']?.isEmpty == true) {
-        context.removeLast();
+      if (_ws == null || !_ws!.connected) {
+        throw 'WebSocket not connected';
       }
-
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 5);
-
-      final request = await client.postUrl(
-        Uri.parse('http://127.0.0.1:$_port/v1/chat/completions'),
-      );
-      request.headers.set('Content-Type', 'application/json');
-      if (_gatewayToken != null) {
-        request.headers.set('Authorization', 'Bearer $_gatewayToken');
-      }
-
-      final body = json.encode({
-        'model': 'default',
-        'messages': context,
-        'stream': true,
+      _currentRunId = await _ws!.chatSend(text);
+      // Safety timeout — unblock after 120s if no response
+      Future.delayed(const Duration(seconds: 120), () {
+        if (_sending && mounted) {
+          setState(() {
+            if (assistantMsg.text.isEmpty) {
+              assistantMsg.text = '⏱ Response timed out. Try again.';
+              assistantMsg.isError = true;
+            }
+            _sending = false;
+            _currentRunId = null;
+          });
+          _saveHistory();
+        }
       });
-      request.add(utf8.encode(body));
-
-      final response = await request.close().timeout(const Duration(seconds: 120));
-
-      if (response.statusCode == 200) {
-        await for (final chunk in response.transform(utf8.decoder)) {
-          for (final line in chunk.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') break;
-            try {
-              final obj = json.decode(data) as Map<String, dynamic>;
-              final delta = obj['choices']?[0]?['delta']?['content'] as String?;
-              if (delta != null) {
-                _streamBuffer += delta;
-                setState(() => assistantMsg.text = _streamBuffer);
-                _scrollToBottom();
-              }
-            } catch (_) {}
-          }
-        }
-        if (_streamBuffer.isEmpty) {
-          setState(() => assistantMsg.text = '(Empty response)');
-        }
-        client.close();
-      } else if (response.statusCode == 404 && !_endpointChecked) {
-        await response.transform(utf8.decoder).join();
-        client.close();
-        _endpointChecked = true;
-        setState(() {
-          assistantMsg.text = 'Enabling chat API... Try again in ~5 seconds.';
-          assistantMsg.isError = true;
-        });
-        await _ensureEndpointEnabled();
-      } else {
-        final respBody = await response.transform(utf8.decoder).join();
-        client.close();
-        setState(() {
-          assistantMsg.text = 'Error ${response.statusCode}: $respBody';
-          assistantMsg.isError = true;
-        });
-      }
     } catch (e) {
       setState(() {
-        assistantMsg.text = '❌ Connection failed: $e';
+        assistantMsg.text = '❌ Failed to send: $e';
         assistantMsg.isError = true;
+        _sending = false;
+        _currentRunId = null;
       });
-    }
-
-    setState(() => _sending = false);
-    _saveHistory();
-    _scrollToBottom();
-
-    // Send notification if app is in background
-    if (!_appInForeground && _streamBuffer.isNotEmpty && !assistantMsg.isError) {
-      final preview = _streamBuffer.length > 100
-          ? '${_streamBuffer.substring(0, 100)}…'
-          : _streamBuffer;
-      NativeBridge.sendChatNotification('OpenClaw', preview);
+      _saveHistory();
     }
   }
 
   Future<void> _regenerate() async {
     if (_sending) return;
+    // Remove last assistant message
     for (int i = _messages.length - 1; i >= 0; i--) {
       if (!_messages[i].isUser) {
         setState(() => _messages.removeAt(i));
         break;
       }
     }
+    // Re-send last user message
     for (int i = _messages.length - 1; i >= 0; i--) {
       if (_messages[i].isUser) {
         final text = _messages[i].text;
@@ -337,8 +648,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _abortRun() {
+    if (_ws != null && _ws!.connected) {
+      _ws!.chatAbort(_currentRunId);
+    }
+  }
+
   Widget _buildDrawer(bool isDark) {
-    void _nav(Widget screen) {
+    void nav(Widget screen) {
       Navigator.pop(context);
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
     }
@@ -360,16 +677,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   const CircleAvatar(
                     radius: 24,
                     backgroundColor: Colors.white24,
-                    child: Text('🦞', style: TextStyle(fontSize: 24)),
+                    child: MiniMascot(size: 36),
                   ),
                   const SizedBox(height: 12),
-                  Text('OpenClaw',
+                  Text(_agentName,
                     style: TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold,
                       color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
-                  Text('AI Gateway for Android',
+                  Text('Powered by OpenClaw',
                     style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.black45),
                   ),
                 ],
@@ -388,43 +705,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ListTile(
               leading: const Icon(Icons.dashboard),
               title: const Text('Dashboard'),
-              onTap: () => _nav(const DashboardScreen()),
+              onTap: () => nav(const DashboardScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.people_outline),
               title: const Text('Agents'),
-              onTap: () => _nav(const AgentsScreen()),
+              onTap: () => nav(const AgentsScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Files'),
-              onTap: () => _nav(const FileBrowserScreen()),
+              onTap: () => nav(const FileBrowserScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.extension_outlined),
               title: const Text('Packages'),
-              onTap: () => _nav(const PackagesScreen()),
+              onTap: () => nav(const PackagesScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.medical_services_outlined),
               title: const Text('Doctor'),
-              onTap: () => _nav(const DoctorScreen()),
+              onTap: () => nav(const DoctorScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.article_outlined),
               title: const Text('Logs'),
-              onTap: () => _nav(const LogsScreen()),
+              onTap: () => nav(const LogsScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.backup_outlined),
               title: const Text('Backup'),
-              onTap: () => _nav(const BackupScreen()),
+              onTap: () => nav(const BackupScreen()),
             ),
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
-              onTap: () => _nav(const SettingsMainScreen()),
+              onTap: () => nav(const SettingsMainScreen()),
             ),
           ],
         ),
@@ -470,6 +787,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    String statusText;
+    if (!_ready && !_wsConnected) {
+      statusText = 'starting...';
+    } else if (_sending) {
+      statusText = 'typing...';
+    } else if (!_wsConnected) {
+      statusText = 'reconnecting...';
+    } else {
+      statusText = 'online';
+    }
+
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightSurface,
       appBar: AppBar(
@@ -490,18 +818,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               const CircleAvatar(
                 radius: 16,
                 backgroundColor: Colors.white24,
-                child: Text('🦞', style: TextStyle(fontSize: 16)),
+                child: MiniMascot(size: 24),
               ),
               const SizedBox(width: 10),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'OpenClaw',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  Text(
+                    _agentName,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   Text(
-                    !_ready ? 'starting...' : (_sending ? 'typing...' : 'online'),
+                    statusText,
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
                   ),
                 ],
@@ -510,6 +838,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
         ),
         actions: [
+          if (_sending)
+            IconButton(
+              icon: const Icon(Icons.stop_circle_outlined),
+              onPressed: _abortRun,
+              tooltip: 'Stop',
+            ),
           IconButton(icon: const Icon(Icons.delete_sweep), onPressed: _clearChat),
         ],
       ),
@@ -521,40 +855,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: Stack(
               children: [
                 _messages.isEmpty
-                    ? Center(
-                        child: !_ready
-                            ? Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 32, height: 32,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: isDark ? Colors.white38 : Colors.black26,
+                    ? !_ready
+                        ? Stack(
+                            children: [
+                              const MascotAnimation(size: 110),
+                              Positioned(
+                                left: 0, right: 0,
+                                bottom: 40,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 24, height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: isDark ? Colors.white24 : Colors.black12,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Getting ready...',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: isDark ? Colors.white38 : Colors.black38,
+                                    const SizedBox(height: 12),
+                                    AnimatedOpacity(
+                                      opacity: _quoteOpacity,
+                                      duration: const Duration(milliseconds: 300),
+                                      child: Text(
+                                        _loadingQuote,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: isDark ? Colors.white38 : Colors.black38,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              )
-                            : Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: isDark ? Colors.white10 : Colors.black12,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: const Text(
-                                  'Start a conversation',
-                                  style: TextStyle(fontSize: 13),
+                                  ],
                                 ),
                               ),
-                      )
+                            ],
+                          )
+                        : Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isDark ? Colors.white10 : Colors.black12,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'Start a conversation',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          )
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -576,7 +924,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     bottom: 8,
                     child: FloatingActionButton.small(
                       onPressed: _scrollToBottom,
-                      backgroundColor: isDark ? AppColors.accent : AppColors.accent,
+                      backgroundColor: AppColors.accent,
                       child: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
                     ),
                   ),
@@ -629,11 +977,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  // Send button
+                  // Combo mic/send button
                   Container(
                     width: 42, height: 42,
                     decoration: BoxDecoration(
-                      color: (_sending || !_ready) ? Colors.grey : AppColors.accent,
+                      color: _isListening
+                          ? Colors.red
+                          : (_sending || !_ready) ? Colors.grey : AppColors.accent,
                       shape: BoxShape.circle,
                     ),
                     child: _sending
@@ -642,8 +992,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : IconButton(
-                            onPressed: _ready ? _send : null,
-                            icon: const Icon(Icons.send, color: Colors.white, size: 18),
+                            onPressed: _ready ? () {
+                              HapticFeedback.lightImpact();
+                              if (_inputController.text.trim().isNotEmpty) {
+                                _send();
+                              } else {
+                                _toggleListening();
+                              }
+                            } : null,
+                            icon: Icon(
+                              _isListening
+                                  ? Icons.stop
+                                  : _inputController.text.trim().isNotEmpty
+                                      ? Icons.send
+                                      : Icons.mic,
+                              color: Colors.white,
+                              size: 18,
+                            ),
                             padding: EdgeInsets.zero,
                           ),
                   ),
@@ -665,27 +1030,60 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ? '${msg.time!.hour.toString().padLeft(2, '0')}:${msg.time!.minute.toString().padLeft(2, '0')}'
         : '';
 
-    final bubbleColor = isUser
+    // Base bubble colors
+    Color baseBubbleColor = isUser
         ? (isDark ? AppColors.accent : AppColors.accent.withOpacity(0.15))
         : msg.isError
             ? (isDark ? const Color(0xFF3D2020) : const Color(0xFFFFE0E0))
             : (isDark ? AppColors.darkSurfaceAlt : Colors.white);
 
+    // Subtle hue shift for user messages based on position in list
+    if (isUser && _messages.length > 1) {
+      final t = index / _messages.length.toDouble();
+      // Shift hue slightly — older messages warmer, newer messages cooler
+      final hsl = HSLColor.fromColor(baseBubbleColor);
+      final hueShift = (t - 0.5) * 12; // ±6 degrees
+      final lightnessShift = (1 - t) * 0.04; // slightly brighter at top
+      baseBubbleColor = hsl
+          .withHue((hsl.hue + hueShift) % 360)
+          .withLightness((hsl.lightness + lightnessShift).clamp(0.0, 1.0))
+          .toColor();
+    }
+
+    final bubbleColor = baseBubbleColor;
     final textColor = isDark ? Colors.white : Colors.black87;
     final timeColor = isDark ? Colors.white38 : Colors.black38;
 
     return GestureDetector(
-      onLongPress: () => _showMessageMenu(msg),
+      onLongPress: () {
+        HapticFeedback.mediumImpact();
+        _showMessageMenu(msg);
+      },
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
+        child: Row(
+          mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Agent avatar (assistant messages only, not grouped)
+            if (!isUser && !grouped)
+              Padding(
+                padding: const EdgeInsets.only(right: 6, bottom: 4),
+                child: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: isDark ? Colors.white12 : AppColors.accent.withOpacity(0.15),
+                  child: const MiniMascot(size: 20),
+                ),
+              )
+            else if (!isUser && grouped)
+              const SizedBox(width: 34), // spacer to align with avatar above
+            Flexible(
+              child: Container(
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.8,
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
           margin: EdgeInsets.only(
             bottom: grouped ? 2 : 4,
-            left: isUser ? 48 : 0,
-            right: isUser ? 0 : 48,
           ),
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
           decoration: BoxDecoration(
@@ -707,6 +1105,57 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Thinking block (collapsible)
+              if (!isUser && msg.thinking.isNotEmpty)
+                GestureDetector(
+                  onTap: () => setState(() => msg.thinkingCollapsed = !msg.thinkingCollapsed),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: isDark ? Colors.white12 : Colors.black12,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              msg.thinkingCollapsed ? Icons.expand_more : Icons.expand_less,
+                              size: 16,
+                              color: isDark ? Colors.white38 : Colors.black38,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Thinking…',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                                color: isDark ? Colors.white38 : Colors.black38,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (!msg.thinkingCollapsed) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            msg.thinking,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               if (!isUser && msg.text.isEmpty && _sending)
                 _TypingDots()
               else
@@ -726,104 +1175,52 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ],
             ],
           ),
-        ),
-      ),
-    );
+              ), // Container end
+            ), // Flexible end
+          ], // Row children end
+        ), // Row end
+      ), // Align end
+    ); // GestureDetector end
   }
 
   Widget _buildFormattedText(String text, Color defaultColor) {
-    if (text.contains('```')) {
-      final parts = <Widget>[];
-      final segments = text.split('```');
-
-      for (int i = 0; i < segments.length; i++) {
-        if (i % 2 == 0) {
-          if (segments[i].trim().isNotEmpty) {
-            parts.add(SelectableText.rich(
-              _parseInlineMarkdown(segments[i].trim(), defaultColor),
-            ));
-          }
-        } else {
-          var code = segments[i];
-          if (code.startsWith('\n')) code = code.substring(1);
-          final firstNewline = code.indexOf('\n');
-          if (firstNewline > 0 && firstNewline < 20 && !code.substring(0, firstNewline).contains(' ')) {
-            code = code.substring(firstNewline + 1);
-          }
-
-          parts.add(Container(
-            width: double.infinity,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Stack(
-              children: [
-                SelectableText(
-                  code.trim(),
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    color: defaultColor,
-                    height: 1.4,
-                  ),
-                ),
-                Positioned(
-                  top: 0, right: 0,
-                  child: GestureDetector(
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: code.trim()));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Code copied'), duration: Duration(seconds: 1)),
-                      );
-                    },
-                    child: Icon(Icons.copy, size: 14, color: defaultColor.withOpacity(0.5)),
-                  ),
-                ),
-              ],
-            ),
-          ));
-        }
-      }
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: parts,
-      );
-    }
-
-    return SelectableText.rich(_parseInlineMarkdown(text, defaultColor));
-  }
-
-  TextSpan _parseInlineMarkdown(String text, Color defaultColor) {
-    final spans = <InlineSpan>[];
-    final baseStyle = TextStyle(fontSize: 14, color: defaultColor, height: 1.4);
-    final regex = RegExp(r'\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`');
-
-    int lastEnd = 0;
-    for (final match in regex.allMatches(text)) {
-      if (match.start > lastEnd) {
-        spans.add(TextSpan(text: text.substring(lastEnd, match.start), style: baseStyle));
-      }
-      if (match.group(1) != null) {
-        spans.add(TextSpan(text: match.group(1), style: baseStyle.copyWith(fontWeight: FontWeight.bold)));
-      } else if (match.group(2) != null) {
-        spans.add(TextSpan(text: match.group(2), style: baseStyle.copyWith(fontStyle: FontStyle.italic)));
-      } else if (match.group(3) != null) {
-        spans.add(TextSpan(
-          text: match.group(3),
-          style: baseStyle.copyWith(fontFamily: 'monospace', fontSize: 13, backgroundColor: defaultColor.withOpacity(0.1)),
-        ));
-      }
-      lastEnd = match.end;
-    }
-    if (lastEnd < text.length) {
-      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
-    }
-    return TextSpan(children: spans.isEmpty ? [TextSpan(text: text, style: baseStyle)] : spans);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return MarkdownBody(
+      data: text,
+      selectable: true,
+      onTapLink: (text, href, title) {
+        if (href != null) launchUrl(Uri.parse(href));
+      },
+      styleSheet: MarkdownStyleSheet(
+        p: TextStyle(fontSize: 14, color: defaultColor, height: 1.4),
+        strong: TextStyle(fontSize: 14, color: defaultColor, fontWeight: FontWeight.bold),
+        em: TextStyle(fontSize: 14, color: defaultColor, fontStyle: FontStyle.italic),
+        code: TextStyle(
+          fontSize: 13,
+          fontFamily: 'monospace',
+          color: defaultColor,
+          backgroundColor: isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.07),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        codeblockPadding: const EdgeInsets.all(12),
+        listBullet: TextStyle(fontSize: 14, color: defaultColor),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(left: BorderSide(color: defaultColor.withOpacity(0.3), width: 3)),
+        ),
+        blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+        blockquote: TextStyle(fontSize: 14, color: defaultColor.withOpacity(0.8), fontStyle: FontStyle.italic),
+        h1: TextStyle(fontSize: 20, color: defaultColor, fontWeight: FontWeight.bold),
+        h2: TextStyle(fontSize: 18, color: defaultColor, fontWeight: FontWeight.bold),
+        h3: TextStyle(fontSize: 16, color: defaultColor, fontWeight: FontWeight.bold),
+        a: TextStyle(fontSize: 14, color: Colors.blue.shade300, decoration: TextDecoration.underline),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(top: BorderSide(color: defaultColor.withOpacity(0.2))),
+        ),
+      ),
+    );
   }
 
   Widget _buildDateSeparator(DateTime? time) {
@@ -861,6 +1258,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               leading: const Icon(Icons.copy),
               title: const Text('Copy'),
               onTap: () {
+                HapticFeedback.lightImpact();
                 Clipboard.setData(ClipboardData(text: msg.text));
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -896,8 +1294,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _quoteTimer?.cancel();
+    _speech.stop();
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
+    _eventSub?.cancel();
+    _connSub?.cancel();
+    _ws?.dispose();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -906,6 +1309,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
 class _ChatMessage {
   String text;
+  String thinking;
+  bool thinkingCollapsed;
   final bool isUser;
   bool isError;
   final DateTime? time;
@@ -913,6 +1318,8 @@ class _ChatMessage {
   _ChatMessage({
     required this.text,
     required this.isUser,
+    this.thinking = '',
+    this.thinkingCollapsed = true,
     this.isError = false,
     this.time,
   });
@@ -921,6 +1328,7 @@ class _ChatMessage {
     'text': text,
     'isUser': isUser,
     'isError': isError,
+    if (thinking.isNotEmpty) 'thinking': thinking,
     'time': time?.toIso8601String(),
   };
 
@@ -928,6 +1336,7 @@ class _ChatMessage {
     text: j['text'] as String? ?? '',
     isUser: j['isUser'] as bool? ?? false,
     isError: j['isError'] as bool? ?? false,
+    thinking: j['thinking'] as String? ?? '',
     time: j['time'] != null ? DateTime.tryParse(j['time'] as String) : null,
   );
 }

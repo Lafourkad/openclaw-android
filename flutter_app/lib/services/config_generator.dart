@@ -56,7 +56,7 @@ class ProviderPreset {
 
   static const zai = ProviderPreset(
     id: 'zai',
-    name: 'ZAI (GLM — Free)',
+    name: 'ZAI (GLM)',
     baseUrl: 'https://api.z.ai/api/coding/paas/v4',
     models: [
       ModelPreset(id: 'glm-5', name: 'GLM-5', reasoning: true),
@@ -206,11 +206,10 @@ class ConfigGenerator {
         'match': {'channel': 'discord'},
       });
     }
-    if (bindings.isEmpty) {
-      // Default: bind to all
-      bindings.add({'agentId': config.agentName});
+    // Only include bindings when channels are configured — gateway uses defaults otherwise
+    if (bindings.isNotEmpty) {
+      result['bindings'] = bindings;
     }
-    result['bindings'] = bindings;
 
     // Tools
     final toolsConfig = <String, dynamic>{

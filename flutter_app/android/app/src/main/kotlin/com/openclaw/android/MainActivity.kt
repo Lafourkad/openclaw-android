@@ -53,6 +53,8 @@ class MainActivity : FlutterActivity() {
                 bootstrapManager.setupDirectories()
                 // Always ensure glibc-compat.js is present (needed by gateway at runtime)
                 bootstrapManager.copyGlibcCompat(applicationContext)
+                // Seed workspace with TOOLS.md, USER.md if not already present
+                bootstrapManager.seedWorkspace(applicationContext)
             } catch (_: Exception) {}
         }.start()
 
@@ -699,6 +701,44 @@ class MainActivity : FlutterActivity() {
                 }
                 override fun onCancel(arguments: Any?) {
                     GatewayService.logSink = null
+                }
+            }
+        )
+
+        // Shake detection EventChannel for mascot animation
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.openclaw.android/shake").setStreamHandler(
+            object : EventChannel.StreamHandler {
+                private var sensorManager: android.hardware.SensorManager? = null
+                private var listener: SensorEventListener? = null
+
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    val sm = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+                    sensorManager = sm
+                    val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+
+                    listener = object : SensorEventListener {
+                        private var lastShakeTime = 0L
+
+                        override fun onSensorChanged(event: SensorEvent?) {
+                            if (event == null) return
+                            val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
+                            val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble())
+                            val now = System.currentTimeMillis()
+                            if (magnitude > 25 && now - lastShakeTime > 2000) {
+                                lastShakeTime = now
+                                events?.success("shake")
+                            }
+                        }
+
+                        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+                    }
+                    sm.registerListener(listener, accel, android.hardware.SensorManager.SENSOR_DELAY_UI)
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    listener?.let { sensorManager?.unregisterListener(it) }
+                    listener = null
+                    sensorManager = null
                 }
             }
         )

@@ -86,14 +86,20 @@ exec "$binDir/busybox" "$@"
         }
     }
 
-    /** Full runtime env — includes NODE_OPTIONS with glibc-compat shim */
+    /** Full runtime env — includes NODE_OPTIONS with glibc-compat shim.
+     *  NOTE: LD_LIBRARY_PATH is intentionally ABSENT here.
+     *  Node.js is launched via glibc's ld.so with --library-path, so it doesn't need
+     *  LD_LIBRARY_PATH. Setting it would break ALL child processes (Android bionic
+     *  binaries like /bin/sh) because the linker would find glibc's libc.so instead
+     *  of Android's bionic libc.
+     *  The wrapper scripts in binDir already use ld.so --library-path for glibc binaries.
+     */
     fun buildEnv(): Map<String, String> = mapOf(
         "HOME"                to filesDir,
         "TMPDIR"              to "$filesDir/tmp",
         "NODE_OPTIONS"        to "--require $glibcCompatPath",
         "npm_config_prefix"   to nodeDir,
         "npm_config_cache"    to "$filesDir/tmp/npm-cache",
-        "LD_LIBRARY_PATH"     to "$glibcDir/lib:$pythonDir/lib",
         "UV_USE_IO_URING"     to "0",
         "CHOKIDAR_USEPOLLING" to "true",
         "MALLOC_ARENA_MAX"    to "1",
@@ -151,14 +157,46 @@ exec "$binDir/busybox" "$@"
         return output
     }
 
+    /**
+     * Kill any orphaned gateway processes left over from a previous app install/crash.
+     * Uses `openclaw gateway stop` which handles pid-file cleanup.
+     * Falls back to killing node processes listening on port 18789.
+     */
+    fun killOrphanedGateway() {
+        // Method 1: openclaw gateway stop (uses pid file)
+        try {
+            val openclawBin = "$nodeDir/bin/openclaw"
+            val stopPb = nodeProcessBuilder(listOf(openclawBin, "gateway", "stop"))
+            stopPb.redirectErrorStream(true)
+            val stopProc = stopPb.start()
+            stopProc.waitFor(10, TimeUnit.SECONDS)
+            if (stopProc.isAlive) stopProc.destroyForcibly()
+        } catch (_: Exception) {}
+
+        // Method 2: kill all node processes (brute force but reliable)
+        try {
+            val pkillPb = ProcessBuilder(listOf("/system/bin/sh", "-c",
+                "pkill -f 'node.*openclaw' 2>/dev/null; pkill -f 'node.*gateway' 2>/dev/null; true"))
+            pkillPb.redirectErrorStream(true)
+            val pkillProc = pkillPb.start()
+            pkillProc.waitFor(5, TimeUnit.SECONDS)
+            if (pkillProc.isAlive) pkillProc.destroyForcibly()
+        } catch (_: Exception) {}
+
+        // Give the old process a moment to die
+        try { Thread.sleep(2000) } catch (_: InterruptedException) {}
+    }
+
     fun startGatewayProcess(): Process {
+        // Kill any orphaned gateway from previous install/crash
+        killOrphanedGateway()
+
         val openclawBin = "$nodeDir/bin/openclaw"
         val pb = nodeProcessBuilder(listOf(
             openclawBin, "gateway", "run",
             "--verbose",
             "--allow-unconfigured",
-            "--auth", "none",   // no token needed for localhost-only gateway
-            "--bind", "loopback" // loopback only — safe without auth
+            "--bind", "loopback" // loopback only — auth handled by config token
         ))
         pb.redirectErrorStream(false)
         return pb.start()

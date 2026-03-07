@@ -100,6 +100,15 @@ class GatewayService : Service() {
                 // Patch openclaw.json: migrate legacy keys + write auth-profiles.json
                 patchOpenclawConfig(filesDir)
 
+                // Seed workspace TOOLS.md with Android environment context (if missing)
+                seedWorkspaceTools(filesDir)
+
+                // Seed SOUL.md / IDENTITY.md with agent name from config
+                seedAgentIdentity(filesDir)
+
+                // Remove BOOTSTRAP.md — the wizard already handles onboarding
+                removeBootstrap(filesDir)
+
                 // Copy glibc-compat.js from APK assets to external storage before every start.
                 // External storage is accessible by both the app and ADB, avoiding any
                 // path resolution issues with internal filesDir on different Android versions.
@@ -117,13 +126,63 @@ class GatewayService : Service() {
                 }
                 Log.i("OpenclawGW", "glibc-compat.js at: $glibcCompatPath")
 
+                // Verify libc.so symlink — critical for child process execution
+                val libcSo = File("$filesDir/glibc/lib/libc.so")
+                val libcSo6 = File("$filesDir/glibc/lib/libc.so.6")
+                Log.i("OpenclawGW", "libc check: libc.so exists=${libcSo.exists()} isSymlink=${java.nio.file.Files.isSymbolicLink(libcSo.toPath())} libc.so.6 exists=${libcSo6.exists()}")
+                if (libcSo.exists()) {
+                    // Check if it's corrupted (should be ELF, starting with 0x7f454c46)
+                    val magic = libcSo.inputStream().use { it.read().let { b1 ->
+                        val b2 = it.read(); val b3 = it.read(); val b4 = it.read()
+                        String(byteArrayOf(b1.toByte(), b2.toByte(), b3.toByte(), b4.toByte()))
+                    }}
+                    Log.i("OpenclawGW", "libc.so magic: '${magic.take(4)}' (expect ELF)")
+                    if (!magic.startsWith("\u007fELF")) {
+                        Log.e("OpenclawGW", "libc.so is CORRUPTED (magic='$magic')! Recreating symlink...")
+                        libcSo.delete()
+                        if (libcSo6.exists()) {
+                            android.system.Os.symlink("libc.so.6", libcSo.absolutePath)
+                            Log.i("OpenclawGW", "Recreated libc.so -> libc.so.6 symlink")
+                        }
+                    }
+                } else if (libcSo6.exists()) {
+                    Log.w("OpenclawGW", "libc.so missing! Creating symlink...")
+                    android.system.Os.symlink("libc.so.6", libcSo.absolutePath)
+                    Log.i("OpenclawGW", "Created libc.so -> libc.so.6 symlink")
+                }
+
                 val runner = GlibcRunner(filesDir, nativeLibDir, glibcCompatPath)
+
+                // Check if a gateway is already running on the port
+                if (isPortInUse(18789)) {
+                    Log.i("OpenclawGW", "Port 18789 already in use — reusing existing gateway")
+                    emitLog("Gateway already running — reusing existing instance")
+                    updateNotificationRunning()
+                    // Don't spawn a new process, just keep the service alive
+                    // The existing gateway will handle WebSocket connections
+                    startUptimeTicker()
+                    return@Thread
+                }
 
                 gatewayProcess = runner.startGatewayProcess()
                 updateNotificationRunning()
                 emitLog("Gateway started")
                 Log.i("OpenclawGW", "Gateway process spawned")
                 startUptimeTicker()
+
+                // Re-seed workspace files after gateway creates defaults
+                // Poll multiple times because gateway may write defaults at any point during boot
+                Thread {
+                    try {
+                        for (i in 1..6) {
+                            Thread.sleep(3000) // Check every 3s for 18s total
+                            Log.i("OpenclawGW", "Re-seed attempt $i/6")
+                            seedWorkspaceTools(filesDir)
+                            seedAgentIdentity(filesDir)
+                            removeBootstrap(filesDir)
+                        }
+                    } catch (_: Exception) {}
+                }.start()
 
                 // Log file accessible via ADB
                 val extDir = applicationContext.getExternalFilesDir(null)
@@ -223,6 +282,262 @@ class GatewayService : Service() {
             }
         } catch (e: Exception) {
             Log.e("OpenclawGW", "installLibsignal failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Seed workspace TOOLS.md with Android environment context.
+     * Only writes if the file doesn't exist yet (gateway's writeFileIfMissing will skip it).
+     */
+    /** Remove BOOTSTRAP.md — the app wizard replaces the CLI onboarding flow */
+    private fun removeBootstrap(filesDir: String) {
+        try {
+            val wsDir = File("$filesDir/.openclaw/workspace")
+            val bootstrap = File(wsDir, "BOOTSTRAP.md")
+            if (bootstrap.exists()) {
+                bootstrap.delete()
+                Log.i("OpenclawGW", "Removed BOOTSTRAP.md (wizard handles onboarding)")
+            }
+        } catch (e: Exception) {
+            Log.e("OpenclawGW", "removeBootstrap failed: ${e.message}")
+        }
+    }
+
+    /** Check if a port is already in use by attempting to connect */
+    private fun isPortInUse(port: Int): Boolean {
+        return try {
+            java.net.Socket("127.0.0.1", port).use { true }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun seedWorkspaceTools(filesDir: String) {
+        try {
+            val wsDir = File("$filesDir/.openclaw/workspace")
+            wsDir.mkdirs()
+
+            val toolsFile = File(wsDir, "TOOLS.md")
+
+            // Detect device info
+            val model = android.os.Build.MODEL ?: "Unknown"
+            val brand = android.os.Build.MANUFACTURER ?: "Unknown"
+            val arch = System.getProperty("os.arch") ?: "aarch64"
+            val tz = java.util.TimeZone.getDefault().id
+            val ram = try {
+                val mi = android.app.ActivityManager.MemoryInfo()
+                val am = applicationContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                am.getMemoryInfo(mi)
+                "${mi.totalMem / (1024 * 1024)}MB"
+            } catch (_: Exception) { "unknown" }
+
+            // OpenClaw version
+            val openclawVersion = try {
+                val pkgJson = File("$filesDir/node/lib/node_modules/openclaw/package.json")
+                if (pkgJson.exists()) {
+                    val json = org.json.JSONObject(pkgJson.readText())
+                    json.optString("version", "unknown")
+                } else "not installed"
+            } catch (_: Exception) { "unknown" }
+
+            // Node version
+            val nodeVersion = try {
+                val versionFile = File("$filesDir/node/bin/node").parentFile?.parentFile?.let {
+                    File(it, "include/node/node_version.h")
+                }
+                if (versionFile?.exists() == true) {
+                    val text = versionFile.readText()
+                    val major = Regex("#define NODE_MAJOR_VERSION (\\d+)").find(text)?.groupValues?.get(1) ?: "?"
+                    val minor = Regex("#define NODE_MINOR_VERSION (\\d+)").find(text)?.groupValues?.get(1) ?: "?"
+                    val patch = Regex("#define NODE_PATCH_VERSION (\\d+)").find(text)?.groupValues?.get(1) ?: "?"
+                    "$major.$minor.$patch"
+                } else "22.x"
+            } catch (_: Exception) { "22.x" }
+
+            // Installed optional packages
+            val optionalTools = listOf("python3", "go", "git", "ffmpeg", "sqlite3", "curl", "make")
+            val installedTools = mutableListOf<String>()
+            val missingTools = mutableListOf<String>()
+            for (tool in optionalTools) {
+                val paths = listOf(
+                    "$filesDir/python/bin/$tool",
+                    "$filesDir/go/bin/$tool",
+                    "$filesDir/git/git",
+                    "$filesDir/bin/$tool",
+                    "$filesDir/node/bin/$tool",
+                    "/data/local/tmp/$tool"
+                )
+                if (paths.any { File(it).exists() }) {
+                    installedTools.add(tool)
+                } else {
+                    missingTools.add(tool)
+                }
+            }
+            // node and npm are always available after bootstrap
+            installedTools.addAll(0, listOf("node", "npm"))
+
+            // Agent config info
+            val agentName = try {
+                val configFile = File("$filesDir/.openclaw/openclaw.json")
+                if (configFile.exists()) {
+                    val config = org.json.JSONObject(configFile.readText())
+                    val agents = config.optJSONObject("agents")
+                    val list = agents?.optJSONArray("list")
+                    if (list != null && list.length() > 0) {
+                        list.getJSONObject(0).optString("name", "")
+                    } else ""
+                } else ""
+            } catch (_: Exception) { "" }
+
+            val providerInfo = try {
+                val configFile = File("$filesDir/.openclaw/openclaw.json")
+                if (configFile.exists()) {
+                    val config = org.json.JSONObject(configFile.readText())
+                    val models = config.optJSONObject("models")
+                    val providers = models?.optJSONObject("providers")
+                    providers?.keys()?.asSequence()?.firstOrNull() ?: ""
+                } else ""
+            } catch (_: Exception) { "" }
+
+            val content = buildString {
+                appendLine("# TOOLS.md — Device & Environment")
+                appendLine()
+                appendLine("## Device")
+                appendLine("- **Phone:** $brand $model ($arch)")
+                appendLine("- **RAM:** $ram")
+                appendLine("- **OS:** Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
+                appendLine("- **Timezone:** $tz")
+                appendLine()
+                appendLine("## Runtime")
+                appendLine("- **OpenClaw:** v$openclawVersion")
+                appendLine("- **Node.js:** v$nodeVersion")
+                appendLine("- **Home:** $filesDir")
+                appendLine("- **Gateway:** http://127.0.0.1:18789")
+                appendLine()
+                if (agentName.isNotEmpty()) {
+                    appendLine("## Agent")
+                    appendLine("- **Name:** $agentName")
+                    if (providerInfo.isNotEmpty()) appendLine("- **Provider:** $providerInfo")
+                    appendLine()
+                }
+                appendLine("## Available Tools")
+                appendLine(installedTools.joinToString(", "))
+                appendLine()
+                if (missingTools.isNotEmpty()) {
+                    appendLine("## Not Installed (available in Packages)")
+                    appendLine(missingTools.joinToString(", "))
+                    appendLine()
+                }
+                appendLine("## Not Available")
+                appendLine("sudo, apt, brew, docker, systemctl, X11/display server")
+                appendLine()
+                appendLine("## Constraints")
+                appendLine("- No root — binaries are self-contained in app sandbox")
+                appendLine("- Gateway runs on loopback only (127.0.0.1:18789)")
+                appendLine("- No GPU compute — LLM inference is remote only")
+                appendLine("- exec runs commands via glibc ld.so → node")
+            }
+
+            // Always overwrite — we generate fresh device info every start
+            toolsFile.writeText(content)
+            Log.i("OpenclawGW", "seedWorkspaceTools: wrote TOOLS.md (${content.length} bytes)")
+        } catch (e: Exception) {
+            Log.e("OpenclawGW", "seedWorkspaceTools failed: ${e.message}")
+        }
+    }
+
+    private fun seedAgentIdentity(filesDir: String) {
+        try {
+            // Read agent name from config
+            val configFile = File("$filesDir/.openclaw/openclaw.json")
+            if (!configFile.exists()) return
+            val config = org.json.JSONObject(configFile.readText())
+            val agents = config.optJSONObject("agents") ?: return
+            val list = agents.optJSONArray("list") ?: return
+            if (list.length() == 0) return
+            val agentName = list.getJSONObject(0).optString("name", "").ifEmpty { return }
+
+            val wsDir = File("$filesDir/.openclaw/workspace")
+            wsDir.mkdirs()
+
+            // Seed SOUL.md — only if missing or still the default template
+            val soulFile = File(wsDir, "SOUL.md")
+            val shouldWriteSoul = if (soulFile.exists()) {
+                val content = soulFile.readText()
+                // Overwrite if it doesn't mention our agent name
+                // This catches: gateway default, OpenClaw template, empty, or generic
+                !content.contains(agentName, ignoreCase = true) && (
+                    content.contains("OpenClaw", ignoreCase = true) ||
+                    content.contains("openclaw", ignoreCase = true) ||
+                    content.contains("_Fill this in") ||
+                    content.contains("figuring out who you are") ||
+                    content.contains("not a chatbot") ||
+                    content.length < 200
+                )
+            } else true
+
+            if (shouldWriteSoul) {
+                val model = android.os.Build.MODEL ?: "Unknown"
+                val brand = android.os.Build.MANUFACTURER ?: "Unknown"
+                val arch = System.getProperty("os.arch") ?: "aarch64"
+                val ram = try {
+                    val mi = android.app.ActivityManager.MemoryInfo()
+                    val am = applicationContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                    am.getMemoryInfo(mi)
+                    "${mi.totalMem / (1024 * 1024)}MB"
+                } catch (_: Exception) { "unknown" }
+
+                soulFile.writeText("""# SOUL.md — Who I Am
+
+I'm $agentName — a personal AI assistant running on your phone.
+
+## Identity
+- My name is **$agentName**
+- I run on a **$brand $model** ($arch, ${ram} RAM, Android ${android.os.Build.VERSION.RELEASE})
+- I'm helpful, direct, and concise
+
+## Style
+- Match the user's language (if they write in French, respond in French)
+- Be conversational, not robotic
+- Short answers for short questions, detailed when needed
+- Use markdown formatting when it helps readability
+
+## Device Environment
+- Phone: $brand $model ($arch), ${ram} RAM, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})
+- Available tools: node, npm, python3, pip, go, git, curl, make, busybox
+- Optional packages (verify with 'which'): ffmpeg, sqlite3, yt-dlp
+- NOT available: sudo, apt, brew, docker, systemctl
+- Hardware: camera (front/back), GPS, accelerometer, gyroscope, vibration, notifications, clipboard
+- Constraints: no root, loopback gateway only (127.0.0.1:18789), no GPU compute, Android file paths
+
+## Boundaries
+- I don't have internet access unless tools are configured
+- I can't make calls or send messages on your behalf without explicit permission
+- Private things stay private
+""")
+                Log.i("OpenclawGW", "Seeded SOUL.md for agent: $agentName")
+            }
+
+            // Seed IDENTITY.md
+            val identityFile = File(wsDir, "IDENTITY.md")
+            val shouldWriteIdentity = if (identityFile.exists()) {
+                val content = identityFile.readText()
+                content.contains("_Fill this in") || content.contains("pick something") ||
+                    (!content.contains(agentName, ignoreCase = true) && content.length < 500)
+            } else true
+
+            if (shouldWriteIdentity) {
+                identityFile.writeText("""# IDENTITY.md
+
+- **Name:** $agentName
+- **Creature:** AI assistant
+- **Vibe:** helpful, direct, adaptable
+- **Emoji:** 🤖
+""")
+                Log.i("OpenclawGW", "Seeded IDENTITY.md for agent: $agentName")
+            }
+        } catch (e: Exception) {
+            Log.e("OpenclawGW", "seedAgentIdentity failed: ${e.message}")
         }
     }
 

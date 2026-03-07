@@ -6,10 +6,10 @@ import 'dart:math';
 /// WebSocket JSON-RPC client for the OpenClaw gateway.
 /// Uses the same protocol as the web Control UI dashboard.
 class GatewayWebSocket {
-  // Use control-ui client ID to benefit from dangerouslyDisableDeviceAuth bypass
-  static const String clientId = 'openclaw-control-ui';
-  static const String clientVersion = '1.9.0';
-  static const String clientMode = 'webchat';
+  // operator role + valid token = device identity not required
+  static const String clientId = 'openclaw-android';
+  static const String clientVersion = '2.0.0';
+  static const String clientMode = 'ui';
 
   final String host;
   final int port;
@@ -19,7 +19,8 @@ class GatewayWebSocket {
   WebSocket? _ws;
   bool _closed = false;
   bool _connected = false;
-  int _backoffMs = 800;
+  bool _everConnected = false;
+  int _backoffMs = 1500;
   Timer? _reconnectTimer;
   Timer? _pingTimer;
 
@@ -53,6 +54,7 @@ class GatewayWebSocket {
     _closed = true;
     _reconnectTimer?.cancel();
     _pingTimer?.cancel();
+    _disconnectDebounce?.cancel();
     _ws?.close();
     _ws = null;
     _setConnected(false);
@@ -93,14 +95,19 @@ class GatewayWebSocket {
   // --- Chat convenience methods ---
 
   /// Send a chat message through the full agent pipeline.
-  Future<String?> chatSend(String message) async {
+  /// If [isHidden] is true, the message won't appear in history (system-level injection).
+  Future<String?> chatSend(String message, {bool isHidden = false}) async {
     final idempotencyKey = _uuid();
-    await request('chat.send', {
+    final params = <String, dynamic>{
       'sessionKey': sessionKey,
       'message': message,
       'deliver': false,
       'idempotencyKey': idempotencyKey,
-    });
+    };
+    if (isHidden) {
+      params['hidden'] = true;
+    }
+    await request('chat.send', params);
     return idempotencyKey;
   }
 
@@ -151,6 +158,10 @@ class GatewayWebSocket {
   Future<void> _doConnect() async {
     if (_closed) return;
 
+    // Close any existing connection before reconnecting
+    try { _ws?.close(); } catch (_) {}
+    _ws = null;
+
     try {
       _ws = await WebSocket.connect(
         'ws://$host:$port',
@@ -162,11 +173,14 @@ class GatewayWebSocket {
         onError: (e) => _onClose('ws error: $e'),
       );
 
-      // Start ping timer to keep connection alive
+      // Start keepalive timer — send a JSON tick request to keep the connection alive
       _pingTimer?.cancel();
       _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
         if (_ws != null && _connected) {
-          try { _ws!.add('ping'); } catch (_) {}
+          try {
+            // Send a lightweight JSON-RPC request as keepalive
+            request('status', {}).catchError((_) {});
+          } catch (_) {}
         }
       });
 
@@ -236,8 +250,9 @@ class GatewayWebSocket {
         'mode': clientMode,
       },
       'role': 'operator',
-      'scopes': ['operator.admin', 'operator.approvals', 'operator.pairing'],
+      'scopes': ['operator.admin'],
       'caps': [],
+      // No device field — operator + valid token skips device identity check
     };
 
     if (token != null && token!.isNotEmpty) {
@@ -245,7 +260,9 @@ class GatewayWebSocket {
     }
 
     request('connect', connectParams, true).then((result) {
-      _backoffMs = 800;
+      _backoffMs = 1500;
+      _everConnected = true;
+      _disconnectDebounce?.cancel();
       _setConnected(true);
 
       // Emit hello event so UI can react
@@ -261,11 +278,21 @@ class GatewayWebSocket {
     });
   }
 
+  Timer? _disconnectDebounce;
+
   void _onClose(String reason) {
     _ws = null;
     _pingTimer?.cancel();
-    _setConnected(false);
+    _connected = false;
     _flushPending(reason);
+
+    // Debounce the UI notification — if we reconnect within 2s, UI won't flicker
+    _disconnectDebounce?.cancel();
+    _disconnectDebounce = Timer(const Duration(seconds: 2), () {
+      if (!_connected) {
+        _connectionController.add(false);
+      }
+    });
     _scheduleReconnect();
   }
 

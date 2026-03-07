@@ -38,20 +38,12 @@ class _PackagesScreenState extends State<PackagesScreen> {
     for (final pkg in OptionalPackage.all) {
       _installed[pkg.id] = await PackageService.isInstalled(pkg);
     }
-    // Check registry packages
-    for (final pkg in PackageRegistry.catalog) {
-      _regInstalled[pkg.id] = _isRegistryPkgInstalled(pkg);
+    // Check registry packages — verify they actually work
+    final regStatuses = await PackageService.checkRegistryStatuses();
+    for (final entry in regStatuses.entries) {
+      _regInstalled[entry.key] = entry.value;
     }
     setState(() => _loading = false);
-  }
-
-  bool _isRegistryPkgInstalled(RegistryPackage pkg) {
-    if (_filesDir == null) return false;
-    for (final bin in pkg.binaries) {
-      if (File('$_filesDir/alpine/$bin').existsSync()) return true;
-      if (File('$_filesDir/bin/${bin.split('/').last}').existsSync()) return true;
-    }
-    return false;
   }
 
   Future<void> _install(OptionalPackage pkg) async {
@@ -135,6 +127,13 @@ class _PackagesScreenState extends State<PackagesScreen> {
 
       // Cleanup
       try { File(apkPath).deleteSync(); } catch (_) {}
+
+      // Verify the package actually works
+      setState(() => _regStatus[pkg.id] = 'Verifying...');
+      final works = await PackageService.isRegistryPackageInstalled(pkg);
+      if (!works) {
+        throw 'Binary extracted but not functional (missing libs?)';
+      }
 
       setState(() {
         _regInstalled[pkg.id] = true;

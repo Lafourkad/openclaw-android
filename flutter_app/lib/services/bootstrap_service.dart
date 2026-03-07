@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../constants.dart';
 import '../models/setup_state.dart';
 import '../models/optional_package.dart';
+import '../models/package_registry.dart';
 import 'native_bridge.dart';
 import 'package_service.dart';
 
@@ -454,5 +455,82 @@ class BootstrapService {
       packages: defaultPackages,
       onProgress: onProgress,
     );
+
+    // Install default registry packages (Alpine APKs like ffmpeg, sqlite)
+    await installDefaultRegistryPackages(filesDir, onProgress: onProgress);
+  }
+
+  /// Install Alpine APK packages flagged as defaultInstall.
+  static Future<void> installDefaultRegistryPackages(
+    String filesDir, {
+    void Function(SetupState)? onProgress,
+  }) async {
+    final defaults = PackageRegistry.catalog.where((p) => p.defaultInstall).toList();
+    for (final pkg in defaults) {
+      // Skip if already installed
+      final binDir = '$filesDir/bin';
+      final alreadyInstalled = pkg.binaries.any((b) {
+        final name = b.split('/').last;
+        return File('$binDir/$name').existsSync();
+      });
+      if (alreadyInstalled) continue;
+
+      onProgress?.call(SetupState(step: SetupStep.installingPackages, message: 'Installing ${pkg.name}...'));
+      try {
+        await installAlpinePackage(filesDir, pkg);
+        // Verify it actually works
+        final works = await PackageService.isRegistryPackageInstalled(pkg);
+        if (!works) {
+          onProgress?.call(SetupState(step: SetupStep.installingPackages, message: '${pkg.name} installed but not functional'));
+        }
+      } catch (e) {
+        // Non-fatal — continue with other packages
+        onProgress?.call(SetupState(step: SetupStep.installingPackages, message: '${pkg.name} failed: $e'));
+      }
+    }
+  }
+
+  /// Install a single Alpine APK package.
+  static Future<void> installAlpinePackage(String filesDir, RegistryPackage pkg) async {
+    final tmpDir = '$filesDir/tmp';
+    final alpineDir = '$filesDir/alpine';
+    final binDir = '$filesDir/bin';
+
+    await Directory(tmpDir).create(recursive: true);
+    await Directory(alpineDir).create(recursive: true);
+    await Directory(binDir).create(recursive: true);
+
+    // Download
+    final apkPath = '$tmpDir/${pkg.id}.apk';
+    final client = HttpClient();
+    final request = await client.getUrl(Uri.parse(pkg.downloadUrl));
+    final response = await request.close();
+    final file = File(apkPath);
+    final sink = file.openWrite();
+    await response.pipe(sink);
+    client.close();
+
+    // Extract
+    await Process.run(
+      '/system/bin/tar',
+      ['-xzf', apkPath, '-C', alpineDir],
+      environment: {'PATH': '/system/bin'},
+    );
+
+    // Symlink binaries
+    for (final binPath in pkg.binaries) {
+      final src = '$alpineDir/$binPath';
+      final name = binPath.split('/').last;
+      final dst = '$binDir/$name';
+      if (File(src).existsSync()) {
+        await Process.run('/system/bin/chmod', ['+x', src]);
+        final wrapper = File(dst);
+        await wrapper.writeAsString('#!/system/bin/sh\nexec $src "\$@"\n');
+        await Process.run('/system/bin/chmod', ['+x', dst]);
+      }
+    }
+
+    // Cleanup
+    try { File(apkPath).deleteSync(); } catch (_) {}
   }
 }

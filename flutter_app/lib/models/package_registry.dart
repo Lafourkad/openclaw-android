@@ -28,6 +28,8 @@ class RegistryPackage {
   final List<String> binaries;
   /// Library dependencies (other Alpine APKs needed)
   final List<String> deps;
+  /// If true, install automatically during bootstrap
+  final bool defaultInstall;
 
   const RegistryPackage({
     required this.id,
@@ -42,6 +44,7 @@ class RegistryPackage {
     this.estimatedSize,
     this.binaries = const [],
     this.deps = const [],
+    this.defaultInstall = false,
   });
 }
 
@@ -170,6 +173,7 @@ class PackageRegistry {
       source: PackageSource.alpineCommunity,
       downloadUrl: '$_alpineCommunity/ffmpeg-6.1.2-r1.apk',
       estimatedSize: '~15 MB', binaries: ['usr/bin/ffmpeg', 'usr/bin/ffprobe'],
+      defaultInstall: true,
     ),
     RegistryPackage(
       id: 'yt-dlp', name: 'yt-dlp', version: '2025.03.31',

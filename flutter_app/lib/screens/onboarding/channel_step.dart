@@ -46,19 +46,6 @@ class _ChannelStepState extends State<ChannelStep> {
     super.dispose();
   }
 
-  bool get _canProceed {
-    if (!widget.config.enableTelegram && !widget.config.enableDiscord) {
-      return false;
-    }
-    if (widget.config.enableTelegram && widget.config.telegramBotToken.isEmpty) {
-      return false;
-    }
-    if (widget.config.enableDiscord && widget.config.discordBotToken.isEmpty) {
-      return false;
-    }
-    return true;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -67,17 +54,67 @@ class _ChannelStepState extends State<ChannelStep> {
       padding: const EdgeInsets.all(24),
       children: [
         Text(
-          'Messaging Channel',
+          'Chat with your Agent',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
-          'Connect your agent to a messaging platform.',
+          'You can chat directly in the app. Optionally connect an external messaging platform.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 24),
+
+        // Direct Chat — always enabled
+        Card(
+          color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(Icons.chat_bubble, color: theme.colorScheme.primary, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Direct Chat', style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      )),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Built-in — no setup needed. Chat right in the app.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 24),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        // Optional channels header
+        Text(
+          'Optional: External Channels',
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'You can also add these later in Settings → Channels.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
 
         // Telegram
         _buildChannelSection(
@@ -170,7 +207,7 @@ class _ChannelStepState extends State<ChannelStep> {
             ),
             const Spacer(),
             FilledButton.icon(
-              onPressed: _canProceed ? widget.onNext : null,
+              onPressed: widget.onNext,  // Always enabled — direct chat is default
               icon: const Icon(Icons.arrow_forward),
               label: const Text('Next'),
             ),

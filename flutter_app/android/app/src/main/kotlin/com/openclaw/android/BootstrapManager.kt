@@ -291,6 +291,29 @@ module.exports = (opts = {}) => {
 """.trimIndent())
     }
 
+    /**
+     * Copy workspace seed files (TOOLS.md, USER.md) into .openclaw/workspace/
+     * Only copies if the target doesn't already exist (wx-style).
+     */
+    fun seedWorkspace(ctx: Context) {
+        val workspaceDir = File("$filesDir/.openclaw/workspace")
+        workspaceDir.mkdirs()
+        val seedFiles = listOf("TOOLS.md", "USER.md")
+        for (name in seedFiles) {
+            val dest = File(workspaceDir, name)
+            if (!dest.exists()) {
+                try {
+                    ctx.assets.open("flutter_assets/assets/workspace-seed/$name").use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    android.util.Log.i("BootstrapManager", "Seeded workspace/$name")
+                } catch (e: Exception) {
+                    android.util.Log.w("BootstrapManager", "Failed to seed $name: ${e.message}")
+                }
+            }
+        }
+    }
+
     fun copyGlibcCompat(ctx: Context) {
         File(patchDir).mkdirs()
         // Copy glibc-compat.js
