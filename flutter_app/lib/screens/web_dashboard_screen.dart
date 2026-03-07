@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../constants.dart';
+import '../services/native_bridge.dart';
 import '../services/preferences_service.dart';
 
 class WebDashboardScreen extends StatefulWidget {
@@ -27,8 +28,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           onPageStarted: (_) {
             if (mounted) setState(() => _loading = true);
           },
-          onPageFinished: (_) {
+          onPageFinished: (_) async {
             if (mounted) setState(() => _loading = false);
+            await _injectToken();
           },
           onWebResourceError: (error) {
             if (mounted) {
@@ -41,6 +43,31 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         ),
       );
     _loadUrl();
+  }
+
+  Future<void> _injectToken() async {
+    try {
+      final token = await NativeBridge.readGatewayToken();
+      if (token.isEmpty) return;
+      // Inject token into the dashboard's localStorage and trigger connect
+      await _controller.runJavaScript('''
+        (function() {
+          // Save token to localStorage so dashboard remembers it
+          localStorage.setItem('openclaw_gateway_token', '$token');
+          localStorage.setItem('gatewayToken', '$token');
+          // Try to find the token input and fill it
+          var inputs = document.querySelectorAll('input[type="text"], input[type="password"], input:not([type])');
+          inputs.forEach(function(inp) {
+            var label = inp.placeholder || inp.name || inp.id || '';
+            if (label.toLowerCase().includes('token') || label.includes('GATEWAY')) {
+              inp.value = '$token';
+              inp.dispatchEvent(new Event('input', {bubbles: true}));
+              inp.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+          });
+        })();
+      ''');
+    } catch (_) {}
   }
 
   Future<void> _loadUrl() async {
