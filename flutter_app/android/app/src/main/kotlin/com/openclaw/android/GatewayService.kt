@@ -69,14 +69,18 @@ class GatewayService : Service() {
     private fun startMemoryPalace() {
         GlobalScope.launch(Dispatchers.IO) {
             try {
+                emitLog("[memory-palace] Initializing...")
                 val palace = com.openclaw.android.memory.MemoryPalaceService(applicationContext)
+                palace.onLog = { msg -> emitLog(msg) }
                 palace.init()
                 memoryPalace = palace
                 val server = com.openclaw.android.memory.MemoryPalaceServer(palace)
                 server.start()
                 memoryServer = server
+                emitLog("[memory-palace] Ready on :18791")
                 Log.i("OpenclawGW", "Memory Palace started on :18791")
             } catch (e: Exception) {
+                emitLog("[memory-palace] Start failed: $e")
                 Log.e("OpenclawGW", "Memory Palace start failed: $e")
             }
         }
@@ -608,6 +612,23 @@ I'm $agentName — a personal AI assistant running on your phone.
             controlUi.put("dangerouslyDisableDeviceAuth", true)
             gw.put("controlUi", controlUi)
             obj.put("gateway", gw)
+
+            // Register Memory Palace HTTP plugin on :18791
+            val pluginsArr = obj.optJSONArray("plugins") ?: org.json.JSONArray()
+            var hasPalace = false
+            for (i in 0 until pluginsArr.length()) {
+                val p = pluginsArr.optJSONObject(i)
+                if (p?.optString("url") == "http://localhost:18791") { hasPalace = true; break }
+            }
+            if (!hasPalace) {
+                pluginsArr.put(org.json.JSONObject().apply {
+                    put("type", "http")
+                    put("url", "http://localhost:18791")
+                    put("name", "memory-palace-android")
+                })
+                obj.put("plugins", pluginsArr)
+                Log.i("OpenclawGW", "Registered Memory Palace plugin at :18791")
+            }
 
             // Migrate legacy agent.* → agents.defaults.*
             if (obj.has("agent")) {

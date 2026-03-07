@@ -34,8 +34,10 @@ class EmbeddingService(private val context: Context) {
     suspend fun init() {
         val modelFile = File(context.filesDir, ".openclaw/models/$MODEL_FILENAME")
         if (!modelFile.exists()) {
-            Log.i(TAG, "Downloading EmbeddingGemma model...")
-            downloadModel(modelFile)
+            Log.i(TAG, "Downloading EmbeddingGemma model (~150MB)...")
+            downloadModel(modelFile) { pct ->
+                if (pct % 10 == 0) Log.i(TAG, "Download: $pct%")
+            }
         }
         if (modelFile.exists() && modelFile.length() > 1_000_000) {
             try {
@@ -52,18 +54,31 @@ class EmbeddingService(private val context: Context) {
         }
     }
 
-    private fun downloadModel(target: File) {
+    private fun downloadModel(target: File, onProgress: ((Int) -> Unit)? = null) {
         try {
             target.parentFile?.mkdirs()
+            val tmpFile = File(target.parent, "${target.name}.tmp")
             val url = java.net.URL(MODEL_URL)
             val conn = url.openConnection() as java.net.HttpURLConnection
             conn.connectTimeout = 30_000
-            conn.readTimeout = 120_000
+            conn.readTimeout = 300_000
+            val total = conn.contentLengthLong
+            var downloaded = 0L
             conn.inputStream.use { input ->
-                target.outputStream().use { output ->
-                    input.copyTo(output)
+                tmpFile.outputStream().use { output ->
+                    val buf = ByteArray(8192)
+                    var n: Int
+                    while (input.read(buf).also { n = it } >= 0) {
+                        output.write(buf, 0, n)
+                        downloaded += n
+                        if (total > 0) {
+                            val pct = (downloaded * 100 / total).toInt()
+                            onProgress?.invoke(pct)
+                        }
+                    }
                 }
             }
+            tmpFile.renameTo(target)
             Log.i(TAG, "Model downloaded: ${target.length()} bytes")
         } catch (e: Exception) {
             Log.e(TAG, "Model download failed: $e")

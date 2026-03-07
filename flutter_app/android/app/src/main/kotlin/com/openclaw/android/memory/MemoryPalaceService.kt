@@ -36,8 +36,12 @@ class MemoryPalaceService(private val context: Context) {
     // Lifecycle
     // ---------------------------------------------------------------------------
 
+    var onLog: ((String) -> Unit)? = null
+
     suspend fun init() = withContext(Dispatchers.IO) {
+        onLog?.invoke("[memory-palace] Loading embedding model...")
         embedding.init()
+        onLog?.invoke("[memory-palace] Loading vector index...")
         hnsw.init()
         // Rebuild HNSW from DB if index is empty but DB has memories
         if (hnsw.size() == 0) {
