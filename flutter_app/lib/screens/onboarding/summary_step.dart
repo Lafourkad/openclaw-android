@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../app.dart';
@@ -48,8 +49,9 @@ class _SummaryStepState extends State<SummaryStep> {
 
       final configPath = await ConfigGenerator.writeConfig(widget.config);
 
-      // Store gateway token in preferences so the node service can find it
-      final configJson = ConfigGenerator.generate(widget.config);
+      // Read back the token from the config file we just wrote (NOT generate() again — different timestamp)
+      final configFile = await File(configPath).readAsString();
+      final configJson = jsonDecode(configFile) as Map<String, dynamic>;
       final gwToken = (configJson['gateway'] as Map?)?['auth']?['token'] as String?;
       if (gwToken != null && gwToken.isNotEmpty) {
         final prefs = PreferencesService();

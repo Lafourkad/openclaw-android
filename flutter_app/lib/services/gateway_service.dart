@@ -42,13 +42,16 @@ class GatewayService {
     // Ensure directories exist on app open.
     try { await NativeBridge.setupDirs(); } catch (_) {}
 
-    final alreadyRunning = await NativeBridge.isGatewayRunning();
-    if (alreadyRunning) {
+    // Check if gateway is reachable via HTTP first (most reliable)
+    final httpHealthy = await checkHealth();
+    final processRunning = await NativeBridge.isGatewayRunning();
+
+    if (httpHealthy || processRunning) {
       await _writeNodeAllowConfig();
       _updateState(_state.copyWith(
-        status: GatewayStatus.starting,
+        status: httpHealthy ? GatewayStatus.running : GatewayStatus.starting,
         dashboardUrl: savedUrl,
-        logs: [..._state.logs, '[INFO] Gateway process detected, reconnecting...'],
+        logs: [..._state.logs, '[INFO] Gateway ${httpHealthy ? "is running" : "process detected, reconnecting"}...'],
       ));
 
       _subscribeLogs();
