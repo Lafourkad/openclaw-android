@@ -111,34 +111,16 @@ class _PackagesScreenState extends State<PackagesScreen> {
           await response.pipe(sink);
           
           setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${pkg.downloadUrls.length}...');
-          // Extract .deb using ar + tar via node
+          // Use tar npm package to extract .deb (handles ar + xz + tar)
           await NativeBridge.runNode(['-e', '''
-const {execSync} = require("child_process");
+const tar = require("tar");
 const fs = require("fs");
-const path = require("path");
 const debPath = "$debPath";
 const outDir = "$alpineDir";
 fs.mkdirSync(outDir, {recursive: true});
-// .deb is an ar archive. Extract data.tar.* from it.
-const ar = fs.readFileSync(debPath);
-// ar format: "!<arch>\\n" then members with 60-byte headers
-let offset = 8; // skip "!<arch>\\n"
-while (offset < ar.length - 60) {
-  const name = ar.slice(offset, offset + 16).toString().trim();
-  const size = parseInt(ar.slice(offset + 48, offset + 58).toString(), 10);
-  offset += 60; // skip header
-  const data = ar.slice(offset, offset + size);
-  offset += size + (size % 2); // ar members are 2-byte aligned
-  if (name.startsWith('data.tar')) {
-    const tmpTar = "$tmpDir/data.tar";
-    fs.writeFileSync(tmpTar, data);
-    // Extract tar.xz or tar.gz
-    try { execSync("/system/bin/tar -xf " + tmpTar + " -C " + outDir, {stdio: "ignore"}); }
-    catch(e) { console.error("tar failed:", e.message); }
-    try { fs.unlinkSync(tmpTar); } catch(e) {}
-    break;
-  }
-}
+tar.x({file: debPath, cwd: outDir, strip: 1}).catch(e => {
+  console.error("tar failed:", e.message);
+});
 '''], timeout: 30);
           try { File(debPath).deleteSync(); } catch (_) {}
         } else if (url.endsWith('.apk')) {
