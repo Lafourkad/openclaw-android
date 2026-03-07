@@ -108,6 +108,7 @@ exec "$binDir/busybox" "$@"
         "GOCACHE"             to "$filesDir/tmp/go-cache",
         "PATH"                to "$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
         "MUSL_LAUNCHER"       to "$nativeLibDir/libmusl-launcher.so",
+        "MUSL_LD"             to "$nativeLibDir/libmusl-ld.so",
         "ALPINE_BIN"          to "$filesDir/alpine/usr/bin",
     )
 
