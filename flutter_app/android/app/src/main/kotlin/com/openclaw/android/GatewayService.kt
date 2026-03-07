@@ -100,6 +100,9 @@ class GatewayService : Service() {
                 // Patch openclaw.json: migrate legacy keys + write auth-profiles.json
                 patchOpenclawConfig(filesDir)
 
+                // Setup musl libs dir — copy bundled libs with correct SONAME for Alpine binaries
+                setupMuslLibs(filesDir, nativeLibDir)
+
                 // Seed workspace TOOLS.md with Android environment context (if missing)
                 seedWorkspaceTools(filesDir)
 
@@ -312,6 +315,26 @@ class GatewayService : Service() {
         }
     }
 
+    private fun setupMuslLibs(filesDir: String, nativeLibDir: String) {
+        // Copy bundled musl libs from APK native lib dir to $HOME/lib/ with correct SONAME.
+        // Alpine binaries expect "libc.musl-aarch64.so.1" by name — Android extracts it as "libmusl-libc.so".
+        // $HOME/lib is added to MUSL_LD library-path so binaries resolve deps even without git installed.
+        val muslLibDir = File("$filesDir/lib")
+        muslLibDir.mkdirs()
+        val copies = mapOf(
+            "libmusl-libc.so" to "libc.musl-aarch64.so.1",
+            "libmusl-ld.so"   to "ld-musl-aarch64.so.1",
+        )
+        for ((src, dst) in copies) {
+            val srcFile = File("$nativeLibDir/$src")
+            val dstFile = File("$filesDir/lib/$dst")
+            if (srcFile.exists() && !dstFile.exists()) {
+                srcFile.copyTo(dstFile, overwrite = false)
+                Log.i("OpenclawGW", "setupMuslLibs: copied $src → lib/$dst")
+            }
+        }
+    }
+
     private fun seedWorkspaceTools(filesDir: String) {
         try {
             val wsDir = File("$filesDir/.openclaw/workspace")
@@ -436,9 +459,9 @@ class GatewayService : Service() {
                 appendLine("- Gateway runs on loopback only (127.0.0.1:18789)")
                 appendLine("- No GPU compute — LLM inference is remote only")
                 appendLine("- exec runs commands via glibc ld.so → node")
-                appendLine("- **Alpine packages:** Use `\$MUSL_LD --library-path \$HOME/git/lib:\$HOME/alpine/usr/lib \$ALPINE_BIN/<tool> [args]`")
-                appendLine("  - Example: `\$MUSL_LD --library-path \$HOME/git/lib:\$HOME/alpine/usr/lib \$ALPINE_BIN/jq --version`")
-                appendLine("  - MUSL_LD, ALPINE_BIN are set in env automatically")
+                appendLine("- **Alpine packages:** `\$MUSL_LD --library-path \$MUSL_LIBPATH \$ALPINE_BIN/<tool> [args]`")
+                appendLine("  - Example: `\$MUSL_LD --library-path \$MUSL_LIBPATH \$ALPINE_BIN/jq --version`")
+                appendLine("  - MUSL_LD, MUSL_LIBPATH, ALPINE_BIN all set automatically in env")
             }
 
             // Always overwrite — we generate fresh device info every start

@@ -184,7 +184,7 @@ class PackageRegistry {
 
     // ── Network & Security ──
     RegistryPackage(
-      id: 'openssh', name: 'OpenSSH', version: 'latest',
+      id: 'openssh-client-default', name: 'OpenSSH', version: 'latest',
       description: 'SSH client — connect to remote servers',
       category: 'Network', icon: Icons.vpn_key, color: Colors.orange,
       source: PackageSource.alpineMain,

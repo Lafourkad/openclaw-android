@@ -109,6 +109,9 @@ exec "$binDir/busybox" "$@"
         "PATH"                to "$binDir:$nodeDir/bin:$pythonDir/bin:$goDir/bin:$glibcDir/bin:$filesDir/gopath/bin:/system/bin",
         "MUSL_LAUNCHER"       to "$nativeLibDir/libmusl-launcher.so",
         "MUSL_LD"             to "$nativeLibDir/libmusl-ld.so",
+        // $filesDir/lib contains libc.musl-aarch64.so.1 (copied from APK native libs at boot)
+        // No dependency on git being installed for base musl libs
+        "MUSL_LIBPATH"        to "$filesDir/lib:$filesDir/git/lib:$filesDir/alpine/usr/lib",
         "ALPINE_BIN"          to "$filesDir/alpine/usr/bin",
     )
 
