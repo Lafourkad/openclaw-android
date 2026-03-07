@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../models/optional_package.dart';
 import '../models/package_registry.dart';
+import '../services/alpine_resolver.dart';
 import '../services/bootstrap_service.dart';
 import '../services/native_bridge.dart';
 import '../services/package_service.dart';
@@ -77,7 +78,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
   Future<void> _installAlpine(RegistryPackage pkg) async {
     setState(() {
       _regBusy[pkg.id] = true;
-      _regStatus[pkg.id] = 'Downloading...';
+      _regStatus[pkg.id] = 'Resolving packages...';
     });
 
     try {
@@ -90,11 +91,28 @@ class _PackagesScreenState extends State<PackagesScreen> {
       await Directory(alpineDir).create(recursive: true);
       await Directory(binDir).create(recursive: true);
 
+      // Resolve package URLs dynamically from Alpine APKINDEX
+      final List<String> downloadUrls;
+      if (pkg.source == PackageSource.alpineMain ||
+          pkg.source == PackageSource.alpineCommunity) {
+        setState(() => _regStatus[pkg.id] = 'Fetching package index...');
+        downloadUrls = await AlpineResolver.resolveDeps(
+          pkg.id,
+          community: pkg.source == PackageSource.alpineCommunity,
+        );
+        if (downloadUrls.isEmpty) {
+          throw 'Package "${pkg.id}" not found in Alpine index';
+        }
+      } else {
+        // Non-Alpine packages (e.g. yt-dlp GitHub release) — use hardcoded URLs
+        downloadUrls = pkg.downloadUrls;
+      }
+
       // Download and extract all package URLs
       final client = HttpClient();
-      for (int i = 0; i < pkg.downloadUrls.length; i++) {
-        final url = pkg.downloadUrls[i];
-        setState(() => _regStatus[pkg.id] = 'Downloading ${i + 1}/${pkg.downloadUrls.length}...');
+      for (int i = 0; i < downloadUrls.length; i++) {
+        final url = downloadUrls[i];
+        setState(() => _regStatus[pkg.id] = 'Downloading ${i + 1}/${downloadUrls.length}...');
         
         final request = await client.getUrl(Uri.parse(url));
         final response = await request.close();
@@ -110,7 +128,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
           final sink = file.openWrite();
           await response.pipe(sink);
           
-          setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${pkg.downloadUrls.length}...');
+          setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${downloadUrls.length}...');
           // Use busybox ar and tar to extract .deb (supports xz)
           await NativeBridge.runNode(['-e', '''
 const {execSync} = require("child_process");
@@ -146,7 +164,7 @@ try { fs.unlinkSync(tmpDir + "/debian-binary"); } catch(e) {}
           final sink = file.openWrite();
           await response.pipe(sink);
           
-          setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${pkg.downloadUrls.length}...');
+          setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${downloadUrls.length}...');
           await Process.run(
             '/system/bin/tar', ['-xzf', apkPath, '-C', alpineDir],
             environment: {'PATH': '/system/bin'},

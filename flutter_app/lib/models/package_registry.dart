@@ -22,7 +22,8 @@ class RegistryPackage {
   final IconData icon;
   final Color color;
   final PackageSource source;
-  /// Download URL(s). Multiple URLs = extract all APKs to the same directory.
+  /// Download URL(s). Only used for non-Alpine packages (e.g. GitHub releases).
+  /// Alpine packages use AlpineResolver — leave this empty.
   final List<String> downloadUrls;
   final String? estimatedSize;
   /// Binary paths to check (relative to install dir)
@@ -51,219 +52,203 @@ class RegistryPackage {
 
 /// Curated package catalog — hand-picked useful tools.
 class PackageRegistry {
-  static const _alpineMain = 'https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64';
-  static const _alpineCommunity = 'https://dl-cdn.alpinelinux.org/alpine/v3.21/community/aarch64';
-
   static const List<RegistryPackage> catalog = [
     // ── CLI Essentials ──
     RegistryPackage(
-      id: 'jq', name: 'jq', version: '1.7.1',
+      id: 'jq', name: 'jq', version: '1.7.x',
       description: 'JSON processor — parse, filter, transform JSON',
       category: 'CLI Tools', icon: Icons.data_object, color: Colors.teal,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/jq-1.7.1-r0.apk', '$_alpineMain/oniguruma-6.9.9-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~1 MB', binaries: ['usr/bin/jq'],
     ),
     RegistryPackage(
-      id: 'curl', name: 'curl', version: '8.14.1',
+      id: 'curl', name: 'curl', version: 'latest',
       description: 'HTTP client — download files, test APIs',
       category: 'CLI Tools', icon: Icons.cloud_download, color: Colors.blue,
       source: PackageSource.alpineMain,
-      downloadUrls: [
-        '$_alpineMain/curl-8.14.1-r2.apk',
-        '$_alpineMain/libcurl-8.14.1-r2.apk',
-        '$_alpineMain/ca-certificates-bundle-20241226-r0.apk',
-      ],
+      downloadUrls: [],
       estimatedSize: '~2 MB', binaries: ['usr/bin/curl'],
     ),
     RegistryPackage(
-      id: 'wget', name: 'wget', version: '1.25.0',
+      id: 'wget', name: 'wget', version: 'latest',
       description: 'File downloader — recursive, resumable',
       category: 'CLI Tools', icon: Icons.download, color: Colors.indigo,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/wget-1.25.0-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~600 KB', binaries: ['usr/bin/wget'],
     ),
     RegistryPackage(
-      id: 'tree', name: 'tree', version: '2.2.1',
+      id: 'tree', name: 'tree', version: 'latest',
       description: 'Directory listing in tree format',
       category: 'CLI Tools', icon: Icons.account_tree, color: Colors.green,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/tree-2.2.1-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~50 KB', binaries: ['usr/bin/tree'],
     ),
     RegistryPackage(
-      id: 'less', name: 'less', version: '668',
+      id: 'less', name: 'less', version: 'latest',
       description: 'Pager — scroll through text files',
       category: 'CLI Tools', icon: Icons.description, color: Colors.blueGrey,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/less-668-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~150 KB', binaries: ['usr/bin/less'],
     ),
 
     // ── Modern CLI ──
     RegistryPackage(
-      id: 'ripgrep', name: 'ripgrep', version: '14.1.1',
+      id: 'ripgrep', name: 'ripgrep', version: 'latest',
       description: 'Ultra-fast grep — regex search in files',
       category: 'Modern CLI', icon: Icons.search, color: Colors.purple,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/ripgrep-14.1.1-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~2 MB', binaries: ['usr/bin/rg'],
     ),
     RegistryPackage(
-      id: 'fd', name: 'fd', version: '10.2.0',
+      id: 'fd', name: 'fd', version: 'latest',
       description: 'Modern find — fast file search',
       category: 'Modern CLI', icon: Icons.folder_open, color: Colors.deepPurple,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/fd-10.2.0-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~1.5 MB', binaries: ['usr/bin/fd'],
     ),
     RegistryPackage(
-      id: 'bat', name: 'bat', version: '0.24.0',
+      id: 'bat', name: 'bat', version: 'latest',
       description: 'Cat with syntax highlighting and git integration',
       category: 'Modern CLI', icon: Icons.code, color: Colors.amber,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/bat-0.24.0-r3.apk', '$_alpineMain/less-668-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~3 MB', binaries: ['usr/bin/bat'],
     ),
     RegistryPackage(
-      id: 'fzf', name: 'fzf', version: '0.56.3',
+      id: 'fzf', name: 'fzf', version: 'latest',
       description: 'Fuzzy finder — interactive search/filter',
       category: 'Modern CLI', icon: Icons.filter_list, color: Colors.pink,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/fzf-0.56.3-r5.apk'],
+      downloadUrls: [],
       estimatedSize: '~2 MB', binaries: ['usr/bin/fzf'],
     ),
     RegistryPackage(
-      id: 'eza', name: 'eza', version: '0.20.12',
+      id: 'eza', name: 'eza', version: 'latest',
       description: 'Modern ls replacement with colors, git status, icons',
       category: 'Modern CLI', icon: Icons.list, color: Colors.lime,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/eza-0.20.12-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~1 MB', binaries: ['usr/bin/eza'],
     ),
 
     // ── Editors ──
     RegistryPackage(
-      id: 'nano', name: 'nano', version: '8.2',
+      id: 'nano', name: 'nano', version: 'latest',
       description: 'Simple terminal text editor',
       category: 'Editors', icon: Icons.edit, color: Colors.grey,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/nano-8.2-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~400 KB', binaries: ['usr/bin/nano'],
     ),
     RegistryPackage(
-      id: 'neovim', name: 'Neovim', version: '0.10.4',
+      id: 'neovim', name: 'Neovim', version: 'latest',
       description: 'Modern Vim — extensible editor',
       category: 'Editors', icon: Icons.terminal, color: Colors.green,
       source: PackageSource.alpineCommunity,
-      downloadUrls: [
-        '$_alpineCommunity/neovim-0.10.4-r0.apk',
-        '$_alpineCommunity/lua5.1-lpeg-1.1.0-r0.apk',
-        '$_alpineMain/lua5.1-5.1.5-r13.apk',
-      ],
+      downloadUrls: [],
       estimatedSize: '~8 MB', binaries: ['usr/bin/nvim'],
     ),
 
     // ── Data & Media ──
     RegistryPackage(
-      id: 'sqlite', name: 'SQLite', version: '3.48.0',
+      id: 'sqlite', name: 'SQLite', version: 'latest',
       description: 'Embedded SQL database — query .db files',
       category: 'Data & Media', icon: Icons.storage, color: Colors.blue,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/sqlite-3.48.0-r4.apk'],
+      downloadUrls: [],
       estimatedSize: '~1 MB', binaries: ['usr/bin/sqlite3'],
     ),
     RegistryPackage(
-      id: 'ffmpeg', name: 'FFmpeg', version: '6.1.2',
+      id: 'ffmpeg', name: 'FFmpeg', version: 'latest',
       description: 'Audio/video processing — convert, trim, encode',
       category: 'Data & Media', icon: Icons.movie, color: Colors.red,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/ffmpeg-6.1.2-r1.apk'],
+      downloadUrls: [],
       estimatedSize: '~15 MB', binaries: ['usr/bin/ffmpeg', 'usr/bin/ffprobe'],
       defaultInstall: true,
     ),
     RegistryPackage(
-      id: 'yt-dlp', name: 'yt-dlp', version: '2025.03.31',
+      id: 'yt-dlp', name: 'yt-dlp', version: '2026.03.03',
       description: 'Download videos from YouTube and 1000+ sites',
       category: 'Data & Media', icon: Icons.video_library, color: Colors.red,
-      source: PackageSource.alpineCommunity,
+      source: PackageSource.github,
       downloadUrls: ['https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.03/yt-dlp_linux_aarch64'],
       estimatedSize: '~5 MB', binaries: ['usr/bin/yt-dlp'],
     ),
 
     // ── Network & Security ──
     RegistryPackage(
-      id: 'openssh', name: 'OpenSSH', version: '9.9p2',
+      id: 'openssh', name: 'OpenSSH', version: 'latest',
       description: 'SSH client — connect to remote servers',
       category: 'Network', icon: Icons.vpn_key, color: Colors.orange,
       source: PackageSource.alpineMain,
-      downloadUrls: [
-        '$_alpineMain/openssh-client-default-9.9_p2-r0.apk',
-        '$_alpineMain/openssh-client-common-9.9_p2-r0.apk',
-        '$_alpineMain/openssh-keygen-9.9_p2-r0.apk',
-        '$_alpineMain/libcrypto3-3.3.3-r0.apk',
-      ],
+      downloadUrls: [],
       estimatedSize: '~2 MB', binaries: ['usr/bin/ssh', 'usr/bin/scp', 'usr/bin/ssh-keygen'],
     ),
     RegistryPackage(
-      id: 'socat', name: 'socat', version: '1.8.0',
+      id: 'socat', name: 'socat', version: 'latest',
       description: 'Multipurpose relay — TCP/UDP tunnels, proxies',
       category: 'Network', icon: Icons.swap_horiz, color: Colors.cyan,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/socat-1.8.0.3-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~300 KB', binaries: ['usr/bin/socat'],
     ),
     RegistryPackage(
-      id: 'age', name: 'age', version: '1.2.1',
+      id: 'age', name: 'age', version: 'latest',
       description: 'Modern encryption tool — simple file encryption',
       category: 'Network', icon: Icons.lock, color: Colors.deepOrange,
       source: PackageSource.alpineCommunity,
-      downloadUrls: ['$_alpineCommunity/age-1.2.1-r5.apk'],
+      downloadUrls: [],
       estimatedSize: '~3 MB', binaries: ['usr/bin/age', 'usr/bin/age-keygen'],
     ),
 
     // ── System ──
     RegistryPackage(
-      id: 'htop', name: 'htop', version: '3.3.0',
+      id: 'htop', name: 'htop', version: 'latest',
       description: 'Interactive process viewer',
       category: 'System', icon: Icons.monitor_heart, color: Colors.green,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/htop-3.3.0-r0.apk'],
+      downloadUrls: [],
       estimatedSize: '~300 KB', binaries: ['usr/bin/htop'],
     ),
     RegistryPackage(
-      id: 'tmux', name: 'tmux', version: '3.5a',
+      id: 'tmux', name: 'tmux', version: 'latest',
       description: 'Terminal multiplexer — split panes, detach sessions',
       category: 'System', icon: Icons.view_column, color: Colors.teal,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/tmux-3.5a-r0.apk', '$_alpineMain/ncurses-terminfo-base-6.5_p20241006-r3.apk'],
+      downloadUrls: [],
       estimatedSize: '~700 KB', binaries: ['usr/bin/tmux'],
     ),
     RegistryPackage(
-      id: 'rsync', name: 'rsync', version: '3.4.1',
+      id: 'rsync', name: 'rsync', version: 'latest',
       description: 'Fast file sync — incremental copy/backup',
       category: 'System', icon: Icons.sync, color: Colors.indigo,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/rsync-3.4.1-r1.apk'],
+      downloadUrls: [],
       estimatedSize: '~500 KB', binaries: ['usr/bin/rsync'],
     ),
 
     // ── Archive ──
     RegistryPackage(
-      id: 'zip', name: 'zip', version: '3.0',
+      id: 'zip', name: 'zip', version: 'latest',
       description: 'Create ZIP archives',
       category: 'Archive', icon: Icons.folder_zip, color: Colors.brown,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/zip-3.0-r13.apk'],
+      downloadUrls: [],
       estimatedSize: '~200 KB', binaries: ['usr/bin/zip'],
     ),
     RegistryPackage(
-      id: 'unzip', name: 'unzip', version: '6.0',
+      id: 'unzip', name: 'unzip', version: 'latest',
       description: 'Extract ZIP archives',
       category: 'Archive', icon: Icons.folder_zip, color: Colors.brown,
       source: PackageSource.alpineMain,
-      downloadUrls: ['$_alpineMain/unzip-6.0-r15.apk'],
+      downloadUrls: [],
       estimatedSize: '~200 KB', binaries: ['usr/bin/unzip'],
     ),
   ];
