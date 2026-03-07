@@ -288,7 +288,11 @@ class ConfigGenerator {
     };
 
     // Gateway — enable control UI WebSocket for in-app chat
-    final gatewayToken = 'openclaw-app-${DateTime.now().millisecondsSinceEpoch}';
+    // Generate a proper hex token (same format as gateway: randomBytes(24).toString("hex"))
+    final rng = Random.secure();
+    final gatewayToken = List.generate(24, (_) => rng.nextInt(256))
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
     result['gateway'] = {
       'port': 18789,
       'auth': {
