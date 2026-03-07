@@ -1,6 +1,8 @@
 plugins {
     id "com.android.application"
     id "kotlin-android"
+    id "kotlin-kapt"
+    id "org.jetbrains.kotlin.plugin.serialization"
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -47,6 +49,11 @@ android {
         jvmTarget = JavaVersion.VERSION_1_8
     }
 
+    // usearch fat JAR from GitHub releases
+    repositories {
+        flatDir { dirs 'lib' }
+    }
+
     defaultConfig {
         applicationId = "com.openclaw.android"
         minSdk = 29
@@ -81,6 +88,18 @@ android {
         jniLibs {
             useLegacyPackaging = true
         }
+        resources {
+            excludes += [
+                'META-INF/INDEX.LIST',
+                'META-INF/io.netty.versions.properties',
+                'META-INF/*.kotlin_module',
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE*',
+                'META-INF/NOTICE*',
+                'LICENSE*.txt',
+                'LICENSE*.md',
+            ]
+        }
     }
 }
 
@@ -88,6 +107,34 @@ dependencies {
     implementation 'org.apache.commons:commons-compress:1.26.0'
     implementation 'org.tukaani:xz:1.9'
     implementation 'com.github.luben:zstd-jni:1.5.6-4@aar'
+
+    // Room (SQLite ORM)
+    def room_version = "2.6.1"
+    implementation "androidx.room:room-runtime:$room_version"
+    implementation "androidx.room:room-ktx:$room_version"
+    kapt "androidx.room:room-compiler:$room_version"
+
+    // LiteRT (TFLite) for EmbeddingGemma
+    implementation 'com.google.ai.edge.litert:litert:1.4.0'
+    implementation 'com.google.ai.edge.litert:litert-support:1.4.0'
+
+    // DJL tokenizer (HuggingFace tokenizer for EmbeddingGemma)
+    implementation 'ai.djl:api:0.31.0'
+    implementation 'ai.djl.huggingface:tokenizers:0.31.0'
+
+    // HNSW ANN index — pure Java, zero JNI, works on Android ARM64
+    implementation 'com.github.jelmerk:hnswlib-core:1.2.1'
+
+    // Ktor (embedded HTTP server for MCP plugin endpoint)
+    def ktor_version = "2.3.12"
+    implementation "io.ktor:ktor-server-core:$ktor_version"
+    implementation "io.ktor:ktor-server-netty:$ktor_version"
+    implementation "io.ktor:ktor-server-content-negotiation:$ktor_version"
+    implementation "io.ktor:ktor-serialization-kotlinx-json:$ktor_version"
+
+    // Kotlin serialization
+    implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
 }
 
 flutter {

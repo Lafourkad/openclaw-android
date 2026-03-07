@@ -157,10 +157,20 @@ class ChatController extends ChangeNotifier {
   // Public actions
   // ---------------------------------------------------------------------------
 
-  Future<void> sendMessage(String text, {bool isHidden = false}) async {
+  Future<void> sendMessage(String text, {bool isHidden = false, AttachmentInfo? attachment}) async {
     if (text.isEmpty || sending) return;
 
-    final userMsg = ChatMessage(text: text, isUser: true, time: DateTime.now());
+    // Display text: for attachments show just the filename, not the base64 blob
+    final displayText = attachment != null
+        ? (attachment.isImage ? '📷 ${attachment.fileName}' : '📎 ${attachment.fileName}')
+        : text;
+
+    final userMsg = ChatMessage(
+      text: displayText,
+      isUser: true,
+      time: DateTime.now(),
+      attachment: attachment,
+    );
     final assistantMsg = ChatMessage(text: '', isUser: false, time: DateTime.now());
     messages.add(userMsg);
     messages.add(assistantMsg);

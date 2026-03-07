@@ -12,6 +12,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -51,11 +54,32 @@ class GatewayService : Service() {
     private var startTime: Long = 0
     private var uptimeThread: Thread? = null
 
+    // Memory Palace
+    private var memoryPalace: com.openclaw.android.memory.MemoryPalaceService? = null
+    private var memoryServer: com.openclaw.android.memory.MemoryPalaceServer? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        startMemoryPalace()
+    }
+
+    private fun startMemoryPalace() {
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val palace = com.openclaw.android.memory.MemoryPalaceService(applicationContext)
+                palace.init()
+                memoryPalace = palace
+                val server = com.openclaw.android.memory.MemoryPalaceServer(palace)
+                server.start()
+                memoryServer = server
+                Log.i("OpenclawGW", "Memory Palace started on :18791")
+            } catch (e: Exception) {
+                Log.e("OpenclawGW", "Memory Palace start failed: $e")
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -577,9 +601,12 @@ I'm $agentName — a personal AI assistant running on your phone.
             val text = configFile.readText()
             val obj = org.json.JSONObject(text)
 
-            // gateway.mode = local
+            // gateway.mode = local + disable device identity check for Control UI
             val gw = obj.optJSONObject("gateway") ?: org.json.JSONObject()
             if (!gw.has("mode")) gw.put("mode", "local")
+            val controlUi = gw.optJSONObject("controlUi") ?: org.json.JSONObject()
+            controlUi.put("dangerouslyDisableDeviceAuth", true)
+            gw.put("controlUi", controlUi)
             obj.put("gateway", gw)
 
             // Migrate legacy agent.* → agents.defaults.*
@@ -690,6 +717,8 @@ I'm $agentName — a personal AI assistant running on your phone.
         }
         emitLog("Gateway stopped by user")
         autoBackup()
+        memoryServer?.stop()
+        memoryPalace?.close()
     }
 
     private fun autoBackup() {

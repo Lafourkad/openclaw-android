@@ -259,21 +259,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     if (result == null || result.files.isEmpty) return;
 
-    final file = File(result.files.single.path!);
+    final filePath = result.files.single.path!;
+    final file = File(filePath);
     final name = result.files.single.name;
     final ext = name.split('.').last.toLowerCase();
     final isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(ext);
-
-    final bytes = await file.readAsBytes();
-    final b64 = base64Encode(bytes);
     final mime = isImage ? 'image/$ext' : 'application/octet-stream';
 
-    // Send as a message with embedded base64 attachment
-    final msg = isImage
+    // Read bytes and encode to base64
+    final bytes = await file.readAsBytes();
+    final b64 = base64Encode(bytes);
+
+    // Message sent to agent: compact reference (not the raw base64 blob)
+    // Full data appended so agent can read it, but UI shows thumbnail/chip
+    final agentMsg = isImage
         ? '[image:$name]\ndata:$mime;base64,$b64'
         : '[file:$name]\ndata:$mime;base64,$b64';
 
-    ctrl.sendMessage(msg);
+    // Attachment metadata for display
+    final attachment = AttachmentInfo(
+      fileName: name,
+      mimeType: mime,
+      isImage: isImage,
+      localPath: filePath,
+    );
+
+    ctrl.sendMessage(agentMsg, attachment: attachment);
   }
 
   // ---------------------------------------------------------------------------
@@ -907,10 +918,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
 
                     // Message content
-                    if (!isUser &&
-                        msg.text.isEmpty &&
-                        ctrl.sending)
+                    if (!isUser && msg.text.isEmpty && ctrl.sending)
                       _TypingDots()
+                    else if (msg.attachment != null && msg.attachment!.isImage && msg.attachment!.localPath != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              File(msg.attachment!.localPath!),
+                              width: 200,
+                              height: 200,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (msg.attachment != null && !msg.attachment!.isImage)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.attach_file, size: 16),
+                          const SizedBox(width: 4),
+                          Flexible(child: Text(msg.attachment!.fileName, style: const TextStyle(fontStyle: FontStyle.italic))),
+                        ],
+                      )
                     else
                       _buildFormattedText(msg.text, textColor),
 
