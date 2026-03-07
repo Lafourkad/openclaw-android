@@ -111,16 +111,32 @@ class _PackagesScreenState extends State<PackagesScreen> {
           await response.pipe(sink);
           
           setState(() => _regStatus[pkg.id] = 'Extracting ${i + 1}/${pkg.downloadUrls.length}...');
-          // Use tar npm package to extract .deb (handles ar + xz + tar)
+          // Use busybox ar and tar to extract .deb (supports xz)
           await NativeBridge.runNode(['-e', '''
-const tar = require("tar");
+const {execSync} = require("child_process");
 const fs = require("fs");
 const debPath = "$debPath";
 const outDir = "$alpineDir";
+const tmpDir = "$tmpDir";
+const busybox = "$_filesDir/bin/busybox";
+
 fs.mkdirSync(outDir, {recursive: true});
-tar.x({file: debPath, cwd: outDir, strip: 1}).catch(e => {
-  console.error("tar failed:", e.message);
-});
+
+// Extract data.tar.* from .deb using busybox ar (extracts to cwd)
+execSync(busybox + " ar -x " + debPath, {cwd: tmpDir, stdio: "inherit"});
+
+// Find the data.tar.* file
+const files = fs.readdirSync(tmpDir);
+const dataTar = files.find(f => f.startsWith("data.tar"));
+if (!dataTar) throw new Error("No data.tar found in .deb");
+
+// Extract tar to outDir
+execSync(busybox + " tar -xf " + tmpDir + "/" + dataTar + " -C " + outDir, {stdio: "inherit"});
+
+// Cleanup
+try { fs.unlinkSync(tmpDir + "/" + dataTar); } catch(e) {}
+try { fs.unlinkSync(tmpDir + "/control.tar.*"); } catch(e) {}
+try { fs.unlinkSync(tmpDir + "/debian-binary"); } catch(e) {}
 '''], timeout: 30);
           try { File(debPath).deleteSync(); } catch (_) {}
         } else if (url.endsWith('.apk')) {
@@ -159,13 +175,16 @@ tar.x({file: debPath, cwd: outDir, strip: 1}).catch(e => {
           // Make executable
           await Process.run('/system/bin/chmod', ['+x', src]);
           // Create wrapper script that uses glibc ld-linux
-          final ldso = '${await NativeBridge.getNativeLibDir()}/libld_aarch64.so';
-          final glibcLib = '$_filesDir/glibc/lib';
+          // Use musl loader from APK native libs (bundled as libmusl-ld.so)
+          // Must be in /data/app/.../lib/arm64/ — SELinux blocks exec from /data/user/
+          final ldMusl = '${await NativeBridge.getNativeLibDir()}/libmusl-ld.so';
+          final muslLib = '$_filesDir/git/lib';
           final wrapper = File(dst);
           // Use /system/bin/sh as interpreter since direct exec from /data is blocked
+          // Include alpine/usr/lib for shared lib deps (e.g. libonig for jq)
           await wrapper.writeAsString(
             '#!/system/bin/sh\n'
-            'exec $ldso --library-path $glibcLib $src "\$@"\n'
+            'exec ${ldMusl} --library-path ${muslLib}:$_filesDir/alpine/usr/lib ${src} "\$@"\n'
           );
           // Note: scripts in /data can't be executed directly due to W^X/SELinux
           // The shell spawns them via /system/bin/sh automatically
