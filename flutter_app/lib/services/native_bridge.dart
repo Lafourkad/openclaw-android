@@ -9,12 +9,16 @@ class NativeBridge {
     return await _channel.invokeMethod('getArch');
   }
 
+  static String? _filesDirCache;
   static Future<String> getFilesDir() async {
-    return await _channel.invokeMethod('getFilesDir');
+    _filesDirCache ??= await _channel.invokeMethod('getFilesDir');
+    return _filesDirCache!;
   }
 
+  static String? _nativeLibDirCache;
   static Future<String> getNativeLibDir() async {
-    return await _channel.invokeMethod('getNativeLibDir');
+    _nativeLibDirCache ??= await _channel.invokeMethod('getNativeLibDir');
+    return _nativeLibDirCache!;
   }
 
   static Future<bool> isBootstrapComplete() async {
