@@ -198,7 +198,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Filter internal/system messages
         if (role == 'user' && text.contains('just installed this app')) continue;
         if (role == 'user' && text.contains('[system:hatch]')) continue;
-        if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') continue;
+        if (text.startsWith('HEARTBEAT') || text == 'NO_REPLY') continue;
         if (role == 'user' && text.contains('Heartbeat prompt:')) continue;
         if (role == 'user' || role == 'assistant') {
           gatewayMessages.add(_ChatMessage(
@@ -344,7 +344,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _scrollToBottom();
         } else if (stream == 'assistant' && text != null && text.isNotEmpty) {
           // Filter internal messages
-          if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') return;
+          if (text.startsWith('HEARTBEAT') || text == 'NO_REPLY') return;
           setState(() => _messages.last.text = text);
           _scrollToBottom();
         }
@@ -478,7 +478,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             // Hide internal/system messages from history
             if (role == 'user' && text.contains('just installed this app')) continue;
             if (role == 'user' && text.contains('[system:hatch]')) continue;
-            if (text == 'HEARTBEAT_OK' || text == 'NO_REPLY') continue;
+            if (text.startsWith('HEARTBEAT') || text == 'NO_REPLY') continue;
             if (role == 'user' && text.contains('Heartbeat prompt:')) continue;
             if (role == 'user' || role == 'assistant') {
               _messages.add(_ChatMessage(
