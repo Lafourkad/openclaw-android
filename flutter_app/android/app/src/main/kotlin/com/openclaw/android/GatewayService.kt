@@ -700,6 +700,23 @@ I'm $agentName — a personal AI assistant running on your phone.
                 plugins.put("slots", slots)
                 obj.put("plugins", plugins)
                 Log.i("OpenclawGW", "patchConfig: Memory Palace Android plugin enabled")
+
+                // Configure memoryFlush to use Memory Palace before compaction
+                val agents = obj.optJSONObject("agents") ?: org.json.JSONObject()
+                val defaults = agents.optJSONObject("defaults") ?: org.json.JSONObject()
+                val compaction = defaults.optJSONObject("compaction") ?: org.json.JSONObject()
+                if (!compaction.has("memoryFlush")) {
+                    val memoryFlush = org.json.JSONObject()
+                    memoryFlush.put("enabled", true)
+                    memoryFlush.put("softThresholdTokens", 6000)
+                    memoryFlush.put("systemPrompt", "Session context is about to be compacted. Save any important information to the Memory Palace NOW using memory_set. This is your last chance before these details are summarized and potentially lost.")
+                    memoryFlush.put("prompt", "Review the current conversation for any unrecorded facts, decisions, gotchas, solutions, or events worth remembering. Use memory_set to store each one in the Memory Palace. Reply NO_REPLY if nothing needs saving.")
+                    compaction.put("memoryFlush", memoryFlush)
+                    defaults.put("compaction", compaction)
+                    agents.put("defaults", defaults)
+                    obj.put("agents", agents)
+                    Log.i("OpenclawGW", "patchConfig: memoryFlush configured for Memory Palace")
+                }
             } else {
                 Log.i("OpenclawGW", "patchConfig: No Memory Palace plugin found")
             }
