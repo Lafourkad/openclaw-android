@@ -51,6 +51,39 @@ async function palaceHealth(baseUrl) {
     }
 }
 // ---------------------------------------------------------------------------
+// LLM synthesis (uses gateway's own chat completions endpoint)
+// ---------------------------------------------------------------------------
+async function synthesizePrimer(memories, cfg) {
+    const gatewayUrl = "http://127.0.0.1:18789";
+    const memoriesBlock = memories.map((m, i) => `${i + 1}. ${m}`).join("\n");
+    const res = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model: "default",
+            max_tokens: 500,
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a memory summarizer. Given a list of stored memories, produce a concise briefing (3-5 sentences) covering: active projects/state, key decisions, and important gotchas. Be specific — include names, versions, and details. No filler. Reply in the same language as the memories.",
+                },
+                {
+                    role: "user",
+                    content: `Summarize these memories into a session briefing:\n\n${memoriesBlock}`,
+                },
+            ],
+        }),
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok)
+        throw new Error(`Gateway returned ${res.status}`);
+    const json = (await res.json());
+    const content = json?.choices?.[0]?.message?.content;
+    if (!content)
+        throw new Error("Empty response from gateway");
+    return content;
+}
+// ---------------------------------------------------------------------------
 // Tool definitions (match Android MemoryPalaceServer tools)
 // ---------------------------------------------------------------------------
 const TOOL_DEFS = [
@@ -280,26 +313,36 @@ function register(api) {
             // Fire async — don't block the tool call
             (async () => {
                 try {
-                    const sections = [];
+                    const allMemories = [];
                     for (const query of queries) {
                         const result = await palaceCall(baseUrl, "memory_recall", {
                             query,
                             limit,
                             instance_id: primerInstanceId,
-                            synthesize: false, // no LLM on device
+                            synthesize: false,
                         });
                         const memories = result?.memories;
                         if (Array.isArray(memories) && memories.length > 0) {
-                            const summaries = memories
-                                .map((m) => `• [${m.memoryType}] ${m.subject ?? "(no subject)"}: ${(m.content ?? "").slice(0, 200)}`)
-                                .join("\n");
-                            sections.push(`**${query}**\n${summaries}`);
+                            for (const m of memories) {
+                                allMemories.push(`[${m.memoryType}] ${m.subject ?? "(no subject)"}: ${(m.content ?? "").slice(0, 300)}`);
+                            }
                         }
                     }
-                    if (sections.length > 0 && enqueue) {
-                        const text = `[Memory Palace — Session Primed (on-device)]\n\n${sections.join("\n\n---\n\n")}`;
+                    if (allMemories.length > 0 && enqueue) {
+                        // Try to synthesize via the gateway's own LLM endpoint
+                        let primerText;
+                        try {
+                            primerText = await synthesizePrimer(allMemories, cfg);
+                            logger.info(`[memory-palace-android/primer] Synthesized ${allMemories.length} memories`);
+                        }
+                        catch (synthErr) {
+                            // Fallback to raw format if synthesis fails
+                            logger.warn(`[memory-palace-android/primer] Synthesis failed (${synthErr.message}), using raw`);
+                            primerText = allMemories.map((m) => `• ${m}`).join("\n");
+                        }
+                        const text = `[Memory Palace — Session Primed]\n\n${primerText}`;
                         enqueue(text, { sessionKey });
-                        logger.info(`[memory-palace-android/primer] Primed session=${sessionKey} (${sections.length} sections)`);
+                        logger.info(`[memory-palace-android/primer] Primed session=${sessionKey}`);
                     }
                 }
                 catch (err) {
