@@ -691,6 +691,18 @@ I'm $agentName — a personal AI assistant running on your phone.
                 val palaceConfig = palaceEntry.optJSONObject("config") ?: org.json.JSONObject()
                 palaceConfig.put("baseUrl", "http://127.0.0.1:18795")
                 if (!palaceConfig.has("instanceId")) palaceConfig.put("instanceId", "android")
+                // Session primer — auto-inject palace context into new sessions
+                if (!palaceConfig.has("sessionPrimer")) {
+                    val primer = org.json.JSONObject()
+                    primer.put("enabled", true)
+                    val queries = org.json.JSONArray()
+                    queries.put("recent work, active projects, current state")
+                    queries.put("important decisions, preferences, gotchas to remember")
+                    primer.put("queries", queries)
+                    primer.put("limit", 5)
+                    palaceConfig.put("sessionPrimer", primer)
+                    Log.i("OpenclawGW", "patchConfig: sessionPrimer enabled")
+                }
                 palaceEntry.put("config", palaceConfig)
                 entries.put("memory-palace-android", palaceEntry)
                 plugins.put("entries", entries)
