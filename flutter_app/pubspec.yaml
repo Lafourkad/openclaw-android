@@ -42,6 +42,9 @@ flutter:
     - assets/ic_launcher.png
     - assets/patches/glibc-compat.js
     - assets/patches/libsignal.tgz
+    - assets/plugins/memory-palace-android/openclaw.plugin.json
+    - assets/plugins/memory-palace-android/package.json
+    - assets/plugins/memory-palace-android/dist/index.js
   fonts:
     - family: DejaVuSansMono
       fonts:

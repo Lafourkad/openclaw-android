@@ -43,8 +43,8 @@ class MemoryPalaceServer(
         server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
             install(ContentNegotiation) { json() }
             routing {
-                get("/tools") { call.respond(toolDefinitions()) }
-                get("/health") { call.respond(mapOf("status" to "ok", "port" to port)) }
+                get("/tools") { call.respond(toJsonArray(toolDefinitions())) }
+                get("/health") { call.respond(toJsonObject(mapOf("status" to "ok", "port" to port))) }
                 post("/tools/call") { handleToolCall(call) }
             }
         }.start(wait = false)
@@ -60,19 +60,20 @@ class MemoryPalaceServer(
         val body = try {
             call.receive<JsonObject>()
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid JSON"))
+            call.respond(HttpStatusCode.BadRequest, toJsonObject(mapOf("error" to "Invalid JSON")))
             return
         }
 
         val toolName = body["name"]?.jsonPrimitive?.content ?: run {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing tool name"))
+            call.respond(HttpStatusCode.BadRequest, toJsonObject(mapOf("error" to "Missing tool name")))
             return
         }
 
         val params = body["parameters"]?.jsonObject ?: JsonObject(emptyMap())
 
         try {
-            val result = when (toolName) {
+            @Suppress("UNCHECKED_CAST")
+            val result: Map<String, Any?> = when (toolName) {
                 "memory_set" -> palace.memorySet(
                     instanceId = params["instance_id"]?.str ?: "android",
                     memoryType = params["memory_type"]?.str ?: "fact",
@@ -126,10 +127,10 @@ class MemoryPalaceServer(
                 "memory_audit" -> palace.memoryAudit()
                 else -> mapOf("error" to "Unknown tool: $toolName")
             }
-            call.respond(mapOf("result" to result, "tool" to toolName))
+            call.respond(toJsonObject(mapOf("result" to result, "tool" to toolName)))
         } catch (e: Exception) {
             Log.e(TAG, "Tool call failed: $toolName — $e")
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+            call.respond(HttpStatusCode.InternalServerError, toJsonObject(mapOf("error" to (e.message ?: "unknown error"))))
         }
     }
 
@@ -185,4 +186,26 @@ class MemoryPalaceServer(
     private val JsonElement?.long get() = this?.jsonPrimitive?.longOrNull ?: 0L
     private val JsonElement?.bool get() = this?.jsonPrimitive?.booleanOrNull ?: false
     private val JsonElement?.float get() = this?.jsonPrimitive?.floatOrNull ?: 1.0f
+
+    // ---------------------------------------------------------------------------
+    // Safe JSON serialization (Map<String, Any?> → JsonObject)
+    // kotlinx.serialization can't auto-serialize heterogeneous maps
+    // ---------------------------------------------------------------------------
+
+    private fun toJsonElement(value: Any?): JsonElement = when (value) {
+        null -> JsonNull
+        is Boolean -> JsonPrimitive(value)
+        is Number -> JsonPrimitive(value)
+        is String -> JsonPrimitive(value)
+        is Map<*, *> -> toJsonObject(value as Map<String, Any?>)
+        is List<*> -> toJsonArray(value)
+        is FloatArray -> JsonArray(value.map { JsonPrimitive(it) })
+        else -> JsonPrimitive(value.toString())
+    }
+
+    private fun toJsonObject(map: Map<String, Any?>): JsonObject =
+        JsonObject(map.mapValues { (_, v) -> toJsonElement(v) })
+
+    private fun toJsonArray(list: List<Any?>): JsonArray =
+        JsonArray(list.map { toJsonElement(it) })
 }

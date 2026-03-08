@@ -1,0 +1,48 @@
+{
+  "id": "memory-palace-android",
+  "kind": "memory",
+  "version": "1.0.0",
+  "description": "On-device semantic memory for Android — proxies Memory Palace HTTP server (Room + HNSW + EmbeddingGemma)",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:18795",
+        "description": "Memory Palace Android HTTP server URL"
+      },
+      "instanceId": {
+        "type": "string",
+        "default": "android",
+        "description": "Default instance ID for this agent"
+      },
+      "sessionPrimer": {
+        "type": "object",
+        "description": "Auto-inject palace context into new sessions via memory_recall",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable automatic session priming on new sessions"
+          },
+          "queries": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Recall queries to run on new session"
+          },
+          "instance_id": {
+            "type": "string",
+            "description": "Instance to query (defaults to plugin instanceId)"
+          },
+          "limit": {
+            "type": "number",
+            "default": 5,
+            "description": "Max memories per query"
+          }
+        }
+      }
+    }
+  }
+}

@@ -22,9 +22,9 @@ class EmbeddingService(private val context: Context) {
         private const val TAG = "EmbeddingService"
         const val DIMS = 768
         private const val SEQ_LEN = 256
-        private const val MODEL_FILENAME = "embeddinggemma-300m-seq256.tflite"
+        private const val MODEL_FILENAME = "granite-embedding-278m-seq256.tflite"
         private const val MODEL_URL =
-            "https://huggingface.co/litert-community/embeddinggemma-300m/resolve/main/embeddinggemma-300m-seq256.tflite"
+            "https://huggingface.co/krittykitty/granite-embedding-278m-multilingual-tflite/resolve/main/granite_embedding_278m_multilingual_seq256.tflite"
     }
 
     private var interpreter: Interpreter? = null
@@ -58,10 +58,29 @@ class EmbeddingService(private val context: Context) {
         try {
             target.parentFile?.mkdirs()
             val tmpFile = File(target.parent, "${target.name}.tmp")
-            val url = java.net.URL(MODEL_URL)
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 30_000
-            conn.readTimeout = 300_000
+
+            // Follow redirects manually (Java HttpURLConnection doesn't follow cross-host 302s)
+            var currentUrl = java.net.URL(MODEL_URL)
+            var conn: java.net.HttpURLConnection
+            var redirects = 0
+            while (true) {
+                conn = currentUrl.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 30_000
+                conn.readTimeout = 300_000
+                conn.instanceFollowRedirects = false
+                val code = conn.responseCode
+                if (code in 301..303 || code == 307 || code == 308) {
+                    val loc = conn.getHeaderField("Location") ?: break
+                    currentUrl = java.net.URL(loc)
+                    conn.disconnect()
+                    if (++redirects > 5) throw java.io.IOException("Too many redirects")
+                    continue
+                }
+                break
+            }
+            if (conn.responseCode != 200) {
+                throw java.io.IOException("HTTP ${conn.responseCode}: ${conn.responseMessage}")
+            }
             val total = conn.contentLengthLong
             var downloaded = 0L
             conn.inputStream.use { input ->
