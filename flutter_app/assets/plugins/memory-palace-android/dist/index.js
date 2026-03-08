@@ -199,8 +199,9 @@ function register(api) {
             description: def.description,
             parameters: def.parameters,
             async execute(_toolCallId, params) {
-                // Inject default instance_id if not provided
-                if ("instance_id" in (def.parameters.properties ?? {}) && !params.instance_id) {
+                // Inject default instance_id only for write operations (not reads/queries)
+                const writeOps = new Set(["memory_set"]);
+                if (writeOps.has(def.name) && "instance_id" in (def.parameters.properties ?? {}) && !params.instance_id) {
                     params.instance_id = defaultInstanceId;
                 }
                 try {
